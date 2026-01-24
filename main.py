@@ -4,6 +4,7 @@ import threading
 import sys
 import platform
 import queue
+import socket # 多重起動チェック用
 
 import speech_recognition as sr
 import keyboard
@@ -26,6 +27,22 @@ genai.configure(api_key=GOOGLE_API_KEY)
 MODEL_NAME = "gemini-2.0-flash-lite"
 model = genai.GenerativeModel(MODEL_NAME)
 
+# 多重起動を防ぐためのポート番号
+LOCK_PORT = 65432
+
+def is_already_running():
+    """ソケットを使用して二重起動をチェックする"""
+    try:
+        # このポートを占有しようとする
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.bind(('127.0.0.1', LOCK_PORT))
+        # 参照を維持するためにグローバル変数に保持（プログラム終了まで閉じない）
+        global _lock_socket
+        _lock_socket = s
+        return False
+    except socket.error:
+        return True
+
 # システムプロンプトの設定
 SYSTEM_PROMPT = (
     "あなたは高精度な文字起こしアシスタントです。ユーザーの音声認識テキストを受け取り、以下の処理のみを行ってください。"
@@ -47,6 +64,8 @@ class VoiceInputApp:
         self.icon = None
         self.running = True
 
+        # 録音の設定（沈黙で勝手に止まらないように調整）
+        self.recognizer.pause_threshold = 10.0 # 沈黙を10秒まで許容
         # 認識感度の調整
         with self.microphone as source:
             self.recognizer.adjust_for_ambient_noise(source, duration=1)
@@ -84,13 +103,14 @@ class VoiceInputApp:
         """AI使用のON/OFFを切り替え"""
         self.use_ai = not self.use_ai
         print(f"AI使用: {'ON' if self.use_ai else 'OFF'}")
-        # アイコンを更新（色を変える）
-        self.icon.icon = self.create_icon_image()
+        if self.icon:
+            self.icon.icon = self.create_icon_image()
 
     def on_quit(self, icon, item):
         """アプリ終了処理"""
         self.running = False
-        self.icon.stop()
+        if self.icon:
+            self.icon.stop()
 
     def process_with_gemini(self, text):
         """Gemini APIを使用してテキストを成形する"""
@@ -119,23 +139,31 @@ class VoiceInputApp:
             pyautogui.hotkey("ctrl", "v")
 
     def record_audio(self):
-        """録音ループ"""
+        """録音ループ: キーが押されている間だけ確実に録音する"""
         with self.microphone as source:
             while self.running:
+                # キーが押された瞬間を検知
                 if keyboard.is_pressed(self.recording_key):
                     if not self.is_recording:
-                        print("\n[聞き取っています...]")
+                        print("\n[聞き取っています... 長押し中]")
                         self.is_recording = True
-                    
-                    try:
-                        audio = self.recognizer.listen(source, timeout=1, phrase_time_limit=15)
-                        self.audio_queue.put(audio)
-                    except sr.WaitTimeoutError:
-                        pass
+                        
+                        try:
+                            # キーが離されるまで、または長時間（例: 60秒）まで録音し続ける
+                            # phrase_time_limitを大きく設定し、沈黙で途切れないようにする
+                            audio = self.recognizer.listen(source, timeout=2, phrase_time_limit=120)
+                            if self.is_recording: # まだキーが押し続けられていた、あるいは録音が完了した
+                                self.audio_queue.put(audio)
+                        except sr.WaitTimeoutError:
+                            self.is_recording = False
+                        except Exception as e:
+                            print(f"録音エラー: {e}")
+                            self.is_recording = False
                 else:
                     if self.is_recording:
+                        # キーが離された
                         self.is_recording = False
-                    time.sleep(0.1)
+                    time.sleep(0.05)
 
     def main_loop(self):
         """テキスト処理ループ"""
@@ -161,6 +189,8 @@ class VoiceInputApp:
                     print("\n[!] 音声が聞き取れませんでした。")
                 except sr.RequestError as e:
                     print(f"\n[!] 音声認識サービスのエラー: {e}")
+                except Exception as e:
+                    print(f"\n[!] 予期せぬエラー: {e}")
             
             time.sleep(0.1)
 
@@ -180,5 +210,10 @@ class VoiceInputApp:
         self.icon.run()
 
 if __name__ == "__main__":
+    # 多重起動のチェック
+    if is_already_running():
+        # すでに起動している場合は静かに終了する
+        sys.exit(0)
+
     app = VoiceInputApp()
     app.setup_tray()
