@@ -70,100 +70,140 @@ class VoiceInputApp:
         with self.microphone as source:
             self.recognizer.adjust_for_ambient_noise(source, duration=1)
 
-    def create_icon_image(self):
-        """システムトレイ用のアイコン画像を生成（ナノバナナ画像を使用）"""
+    def create_icon_image(self, state="normal"):
+        """システムトレイ用のアイコン画像を生成"""
         icon_path = os.path.join(os.path.dirname(__file__), "icon.png")
         
         try:
             if os.path.exists(icon_path):
                 image = Image.open(icon_path).convert("RGBA")
                 
-                # AI未使用時は画像を白黒（グレースケール）にする
+                # 録音中はアイコンを少し明るくし、赤いインジケータを表示
+                if state == "recording":
+                    overlay = Image.new('RGBA', image.size, (0, 0, 0, 0))
+                    draw = ImageDraw.Draw(overlay)
+                    # 右上に赤い円を表示
+                    draw.ellipse([image.size[0]-20, 4, image.size[0]-4, 20], fill="red", outline="white", width=2)
+                    image = Image.alpha_composite(image, overlay)
+                
+                # AI未使用時は画像を白黒にする
                 if not self.use_ai:
                     from PIL import ImageEnhance
                     enhancer = ImageEnhance.Color(image)
-                    image = enhancer.enhance(0.0) # 彩度を0にして白黒化
+                    image = enhancer.enhance(0.0)
                     
-                # アイコンサイズに最適化してリサイズ
                 image = image.resize((64, 64), Image.Resampling.LANCZOS)
                 return image
             else:
-                # 画像がない場合のフォールバック（シンプルな円を表示）
-                width, height = 64, 64
-                color = "#4285F4" if self.use_ai else "#757575"
-                image = Image.new('RGB', (width, height), color)
-                dc = ImageDraw.Draw(image)
-                dc.ellipse([width//4, height//4, width*3//4, height*3//4], fill="white")
+                # フォールバック
+                image = Image.new('RGB', (64, 64), "red" if state == "recording" else ("blue" if self.use_ai else "gray"))
                 return image
-        except Exception as e:
-            print(f"アイコン生成エラー: {e}")
+        except:
             return Image.new('RGB', (64, 64), "yellow")
 
-    def toggle_ai(self, icon, item):
-        """AI使用のON/OFFを切り替え"""
-        self.use_ai = not self.use_ai
-        print(f"AI使用: {'ON' if self.use_ai else 'OFF'}")
+    def update_icon_state(self, state):
+        """アイコンの状態を即座に反映"""
         if self.icon:
-            self.icon.icon = self.create_icon_image()
-
-    def on_quit(self, icon, item):
-        """アプリ終了処理"""
-        self.running = False
-        if self.icon:
-            self.icon.stop()
+            self.icon.icon = self.create_icon_image(state=state)
 
     def process_with_gemini(self, text):
-        """Gemini APIを使用してテキストを成形する"""
+        """Gemini APIを使用してテキストを成形"""
         if not text or not self.use_ai:
             return text
-        
         try:
             prompt = f"{SYSTEM_PROMPT}\n\n入力テキスト: {text}"
             response = model.generate_content(prompt)
             return response.text.strip()
         except Exception as e:
-            print(f"\n[Error] AI変換エラー: {e}")
+            print(f"AIエラー: {e}")
             return text
 
     def type_text(self, text):
-        """テキストをクリップボードにコピーして貼り付ける"""
-        if not text:
-            return
-            
+        """クリップボード経由で貼り付け"""
+        if not text: return
         pyperclip.copy(text)
         time.sleep(0.1)
-        
+        # 確実に修飾キーが離れたタイミングで行う
         if platform.system() == "Darwin":
             pyautogui.hotkey("command", "v")
         else:
             pyautogui.hotkey("ctrl", "v")
 
     def record_audio(self):
-        """録音ループ: キーが押されている間だけ確実に録音する"""
-        with self.microphone as source:
-            while self.running:
-                # キーが押された瞬間を検知
-                if keyboard.is_pressed(self.recording_key):
-                    if not self.is_recording:
-                        print("\n[聞き取っています... 長押し中]")
-                        self.is_recording = True
-                        
-                        try:
-                            # キーが離されるまで、または長時間（例: 60秒）まで録音し続ける
-                            # phrase_time_limitを大きく設定し、沈黙で途切れないようにする
-                            audio = self.recognizer.listen(source, timeout=2, phrase_time_limit=120)
-                            if self.is_recording: # まだキーが押し続けられていた、あるいは録音が完了した
-                                self.audio_queue.put(audio)
-                        except sr.WaitTimeoutError:
-                            self.is_recording = False
-                        except Exception as e:
-                            print(f"録音エラー: {e}")
-                            self.is_recording = False
-                else:
-                    if self.is_recording:
-                        # キーが離された
-                        self.is_recording = False
-                    time.sleep(0.05)
+        """録音ループ: PyAudioを使用してキーの状態に完全に同期させる"""
+        import pyaudio
+        import io
+        import wave
+
+        p = pyaudio.PyAudio()
+        stream = None
+        
+        # 音声フォーマット設定
+        FORMAT = pyaudio.paInt16
+        CHANNELS = 1
+        RATE = 16000
+        CHUNK = 1024
+
+        while self.running:
+            # 右Altキーの監視 (キーコード165はWindowsのRight Alt)
+            is_pressed = keyboard.is_pressed(self.recording_key) or keyboard.is_pressed(165)
+
+            if is_pressed and not self.is_recording:
+                # 録音開始
+                self.is_recording = True
+                self.update_icon_state("recording")
+                print("\n[録音開始]")
+                
+                frames = []
+                stream = p.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK)
+                
+                # キーが離されるまで録音し続ける
+                while (keyboard.is_pressed(self.recording_key) or keyboard.is_pressed(165)) and self.running:
+                    data = stream.read(CHUNK, exception_on_overflow=False)
+                    frames.append(data)
+                
+                # 録音停止
+                stream.stop_stream()
+                stream.close()
+                self.is_recording = False
+                self.update_icon_state("normal")
+                print("[録音終了]")
+
+                if frames:
+                    # WAVE形式に変換してSpeechRecognitionに渡す
+                    container = io.BytesIO()
+                    wf = wave.open(container, 'wb')
+                    wf.setnchannels(CHANNELS)
+                    wf.setsampwidth(p.get_sample_size(FORMAT))
+                    wf.setframerate(RATE)
+                    wf.writeframes(b''.join(frames))
+                    wf.close()
+                    container.seek(0)
+                    
+                    with sr.AudioFile(container) as audio_source:
+                        audio_data = self.recognizer.record(audio_source)
+                        self.audio_queue.put(audio_data)
+
+            time.sleep(0.02)
+        p.terminate()
+
+    def main_loop(self):
+        """処理ループ"""
+        while self.running:
+            if not self.audio_queue.empty():
+                audio = self.audio_queue.get()
+                print("[認識中...]")
+                try:
+                    raw_text = self.recognizer.recognize_google(audio, language="ja-JP")
+                    print(f"認識: {raw_text}")
+                    refined_text = self.process_with_gemini(raw_text)
+                    print(f"変換: {refined_text}")
+                    self.type_text(refined_text)
+                except sr.UnknownValueError:
+                    print("[!] 聞き取れませんでした")
+                except Exception as e:
+                    print(f"[!] エラー: {e}")
+            time.sleep(0.1)
 
     def main_loop(self):
         """テキスト処理ループ"""
