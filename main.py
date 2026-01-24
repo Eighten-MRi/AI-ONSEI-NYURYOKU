@@ -12,13 +12,19 @@ import pyperclip
 import pyautogui
 from dotenv import load_dotenv
 
+# アプリ化のためのライブラリ
+import pystray
+from pystray import MenuItem as item
+from PIL import Image, ImageDraw
+
 # .envファイルから環境変数を読み込む
 load_dotenv()
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 # Geminiの初期化
 genai.configure(api_key=GOOGLE_API_KEY)
-model = genai.GenerativeModel("gemini-1.5-flash")
+MODEL_NAME = "gemini-2.0-flash-lite"
+model = genai.GenerativeModel(MODEL_NAME)
 
 # システムプロンプトの設定
 SYSTEM_PROMPT = (
@@ -30,29 +36,73 @@ SYSTEM_PROMPT = (
     "出力は修正後のテキストのみを行ってください。"
 )
 
-class VoiceInputTool:
+class VoiceInputApp:
     def __init__(self):
         self.recognizer = sr.Recognizer()
         self.microphone = sr.Microphone()
         self.is_recording = False
+        self.use_ai = True  # AI使用フラグ
         self.audio_queue = queue.Queue()
         self.recording_key = "right alt"
-        
+        self.icon = None
+        self.running = True
+
         # 認識感度の調整
         with self.microphone as source:
             self.recognizer.adjust_for_ambient_noise(source, duration=1)
 
+    def create_icon_image(self):
+        """システムトレイ用のアイコン画像を生成（ナノバナナ画像を使用）"""
+        icon_path = os.path.join(os.path.dirname(__file__), "icon.png")
+        
+        try:
+            if os.path.exists(icon_path):
+                image = Image.open(icon_path).convert("RGBA")
+                
+                # AI未使用時は画像を白黒（グレースケール）にする
+                if not self.use_ai:
+                    from PIL import ImageEnhance
+                    enhancer = ImageEnhance.Color(image)
+                    image = enhancer.enhance(0.0) # 彩度を0にして白黒化
+                    
+                # アイコンサイズに最適化してリサイズ
+                image = image.resize((64, 64), Image.Resampling.LANCZOS)
+                return image
+            else:
+                # 画像がない場合のフォールバック（シンプルな円を表示）
+                width, height = 64, 64
+                color = "#4285F4" if self.use_ai else "#757575"
+                image = Image.new('RGB', (width, height), color)
+                dc = ImageDraw.Draw(image)
+                dc.ellipse([width//4, height//4, width*3//4, height*3//4], fill="white")
+                return image
+        except Exception as e:
+            print(f"アイコン生成エラー: {e}")
+            return Image.new('RGB', (64, 64), "yellow")
+
+    def toggle_ai(self, icon, item):
+        """AI使用のON/OFFを切り替え"""
+        self.use_ai = not self.use_ai
+        print(f"AI使用: {'ON' if self.use_ai else 'OFF'}")
+        # アイコンを更新（色を変える）
+        self.icon.icon = self.create_icon_image()
+
+    def on_quit(self, icon, item):
+        """アプリ終了処理"""
+        self.running = False
+        self.icon.stop()
+
     def process_with_gemini(self, text):
         """Gemini APIを使用してテキストを成形する"""
-        if not text:
-            return ""
+        if not text or not self.use_ai:
+            return text
         
         try:
             prompt = f"{SYSTEM_PROMPT}\n\n入力テキスト: {text}"
             response = model.generate_content(prompt)
             return response.text.strip()
         except Exception as e:
-            print(f"\n[Error] Gemini API エラー: {e}")
+            print(f"\n[Error] AI変換エラー: {e}")
             return text
 
     def type_text(self, text):
@@ -61,66 +111,74 @@ class VoiceInputTool:
             return
             
         pyperclip.copy(text)
+        time.sleep(0.1)
         
-        # OSに応じた貼り付けショートカット
-        if platform.system() == "Darwin":  # Mac
+        if platform.system() == "Darwin":
             pyautogui.hotkey("command", "v")
-        else:  # Windows/Linux
+        else:
             pyautogui.hotkey("ctrl", "v")
 
     def record_audio(self):
-        """録音ループ（別スレッドで実行）"""
+        """録音ループ"""
         with self.microphone as source:
-            while True:
+            while self.running:
                 if keyboard.is_pressed(self.recording_key):
                     if not self.is_recording:
                         print("\n[聞き取っています...]")
                         self.is_recording = True
-                        
-                    # 録音開始
-                    audio = self.recognizer.listen(source)
-                    self.audio_queue.put(audio)
+                    
+                    try:
+                        audio = self.recognizer.listen(source, timeout=1, phrase_time_limit=15)
+                        self.audio_queue.put(audio)
+                    except sr.WaitTimeoutError:
+                        pass
                 else:
                     if self.is_recording:
                         self.is_recording = False
                     time.sleep(0.1)
 
     def main_loop(self):
-        """処理ループ"""
-        print(f"--- AI 音声入力ツール 起動中 ---")
-        print(f"設定: [{self.recording_key}] キーを押している間だけ録音します。")
-        print("終了するには Ctrl+C を押してください。")
-        
-        # 録音スレッドの開始
-        threading.Thread(target=self.record_audio, daemon=True).start()
-
-        try:
-            while True:
-                if not self.audio_queue.empty():
-                    audio = self.audio_queue.get()
+        """テキスト処理ループ"""
+        while self.running:
+            if not self.audio_queue.empty():
+                audio = self.audio_queue.get()
+                
+                print("[音声認識中...]")
+                try:
+                    raw_text = self.recognizer.recognize_google(audio, language="ja-JP")
+                    print(f"認識結果: {raw_text}")
                     
-                    print("[音声認識中...]")
-                    try:
-                        # Google Web Speech API でテキスト化
-                        raw_text = self.recognizer.recognize_google(audio, language="ja-JP")
-                        print(f"認識結果: {raw_text}")
-                        
+                    if self.use_ai:
                         print("[AIが変換中...]")
                         refined_text = self.process_with_gemini(raw_text)
                         print(f"変換結果: {refined_text}")
-                        
-                        # 入力
-                        self.type_text(refined_text)
-                        
-                    except sr.UnknownValueError:
-                        print("\n[!] 音声が聞き取れませんでした。")
-                    except sr.RequestError as e:
-                        print(f"\n[!] 音声認識サービスのエラー: {e}")
+                    else:
+                        refined_text = raw_text
                     
-                time.sleep(0.1)
-        except KeyboardInterrupt:
-            print("\n終了します。")
+                    self.type_text(refined_text)
+                    
+                except sr.UnknownValueError:
+                    print("\n[!] 音声が聞き取れませんでした。")
+                except sr.RequestError as e:
+                    print(f"\n[!] 音声認識サービスのエラー: {e}")
+            
+            time.sleep(0.1)
+
+    def setup_tray(self):
+        """システムトレイアイコンのセットアップ"""
+        menu = (
+            item(f'AI使用を切り替え', self.toggle_ai, checked=lambda item: self.use_ai),
+            item('終了', self.on_quit)
+        )
+        self.icon = pystray.Icon("voice_input_tool", self.create_icon_image(), "AI音声入力ツール", menu)
+        
+        # 処理ループを別スレッドで開始
+        threading.Thread(target=self.record_audio, daemon=True).start()
+        threading.Thread(target=self.main_loop, daemon=True).start()
+        
+        # トレイアイコンをメインスレッドで実行
+        self.icon.run()
 
 if __name__ == "__main__":
-    tool = VoiceInputTool()
-    tool.main_loop()
+    app = VoiceInputApp()
+    app.setup_tray()
