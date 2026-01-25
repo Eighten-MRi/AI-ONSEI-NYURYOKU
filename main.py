@@ -26,6 +26,8 @@ def resource_path(relative_path):
 
 import tkinter as tk
 import random
+import math
+
 
 
 # .envファイルから環境変数を読み込む
@@ -55,17 +57,18 @@ def is_already_running():
 
 # システムプロンプトの設定
 SYSTEM_PROMPT = (
-    "あなたは高精度な文字起こしアシスタントです。ユーザーの音声認識テキストを受け取り、以下の処理のみを行ってください。"
-    "文章の要約や意図的なリライト、標準語への変換は【厳禁】です。\n"
+    "あなたは高精度な文字起こしアシスタントです。ユーザーの音声認識テキストを受け取り、以下の処理のみを行ってください。\n"
     "1. 文脈から誤変換と思われる漢字のみを修正する。\n"
-    "2. フィラー（『えー』『あー』など）は削除しますが、感情や強調を伴う感嘆詞（『お、』『えっ』『あ』など）はフレーズの一部として【必ず維持】してください。\n"
-    "3. 「あ、違うわ」「あ、間違えた」などの言い直しを検知した場合、それより前の不要な発言を削除し、最新の正しい意図のみを抽出してください。\n"
-    "4. 方言（例：〜やねん、〜やん、〜しとって）や語尾、口調、疑問符（？）は【絶対に一言一句削らず、そのまま維持】してください。\n"
-    "5. 文末が明らかに疑問文である場合のみ「？」を付けてください。断定や通常の独り言に「？」を付与しないでください。\n"
-    "6. 必要に応じて読点を補う。\n"
+    "2. フィラーは削除するが、感嘆詞は維持する。\n"
+    "3. 方言は維持する。標準語への変換を行わず、聞こえたまま忠実に書き起こすこと。\n"
+    "4. 【重要】文末に勝手に句点「。」を付けないこと。これは絶対です。\n"
+    "5. 認識結果が「まる」のみの場合は「。」を出力する。\n"
+    "6. 認識結果が「てん」のみの場合は「、」を出力する。\n"
+    "7. 認識結果が「改行」または「かいぎょう」のみの場合は改行コード(\\n)を出力する。\n"
     "出力は修正後のテキストのみを行ってください。"
 )
 # 可能な限りユーザーが発言したそのままのニュアンスを保つことが最優先です。
+
 class RecordingIndicator:
     """画面中央下に表示される心電図風インジケータ"""
     def __init__(self):
@@ -86,44 +89,91 @@ class RecordingIndicator:
         y = screen_height - height - 60
         self.root.geometry(f"{width}x{height}+{x}+{y}")
         
-        # マウスイベント貫通 (Windows)
-        # マウスイベント貫通設定を削除（右クリックメニュー有効化のため）
-        # 元の透過設定は -transparentcolor で機能する
-
-
         # キャンバス設定
         self.canvas = tk.Canvas(self.root, width=width, height=height, bg="black", highlightthickness=0)
         self.canvas.pack()
         
+        # キャンバスイベント
+        self.canvas.bind("<Button-3>", self.show_shutdown_button) # 右クリック
+        self.canvas.bind("<Button-1>", self.on_click)             # 左クリック
+        
         self.width = width
         self.height = height
         self.points = []
+        
+        # 状態フラグ
         self.is_recording = False
         self.is_processing = False
-        self.pqrst_queue = []
+        self.shutdown_visible = False
+        
+        # アニメーション用変数
+        self.current_volume = 0 # 音量 (0.0 - 1.0相当)
+        self.pqrst_queue = []   # 心拍波形キュー
+        self.processing_frame = 0 # 処理中アニメーション用フレーム
+        
         self.alpha_idle = 0.2
         self.alpha_active = 0.9
         
-        # ネオンカラー定義
-        self.color_cyan = "#00FFFF"   # ネオンシアン
-        self.color_orange = "#FFA500" # ネオンオレンジ (処理中)
-        self.color_glow = "#008080"    # グロー用
-        self.color_grid = "#003333"    # グリッド用（暗い）
+        # カラー定義
+        self.color_idle = "#00FF00"    # 待機中（緑）
+        self.color_recording = "#00FFFF" # 録音中（シアン）
+        self.color_process_start = (255, 165, 0) # オレンジ
+        self.color_process_end = (255, 0, 0)     # 赤
+        self.color_grid = "#003333"
+        
+        # アプリ終了コールバック
+        self.on_quit_callback = None
         
         # 初期描画
         self.root.attributes("-alpha", self.alpha_idle)
         self.update_wave()
 
+    def set_callback(self, callback):
+        self.on_quit_callback = callback
 
-    def setup_context_menu(self, on_quit_callback):
-        """右クリックメニューの設定"""
-        self.context_menu = tk.Menu(self.root, tearoff=0)
-        self.context_menu.add_command(label="終了", command=on_quit_callback)
+    def set_callback(self, callback):
+        self.on_quit_callback = callback
+
+    def show_shutdown_button(self, event):
+        """右クリックでSHUTDOWNボタンを表示"""
+        # 既に表示中なら何もしない（トグルにすると二重クリックで消えるのが煩わしいかもだが今回はトグル維持か確認。
+        # 要望は「出にくい」への対処と「自動で消える」なので、強制表示で良い。
         
-        def show_menu(event):
-            self.context_menu.post(event.x_root, event.y_root)
+        self.shutdown_visible = True
+        self.root.attributes("-alpha", self.alpha_active)
+        
+        # 既存のタイマーがあればキャンセル（連続クリック対策）
+        if hasattr(self, "_hide_timer") and self._hide_timer:
+            self.root.after_cancel(self._hide_timer)
             
-        self.root.bind("<Button-3>", show_menu)
+        # 1.5秒後に自動で隠す
+        self._hide_timer = self.root.after(1500, self.hide_shutdown_button)
+
+    def hide_shutdown_button(self):
+        """SHUTDOWNボタンを隠す"""
+        if self.shutdown_visible:
+            self.shutdown_visible = False
+            if not (self.is_recording or self.is_processing):
+                 self.root.attributes("-alpha", self.alpha_idle)
+
+    def on_click(self, event):
+        """クリック判定（SHUTDOWNボタンなど）"""
+        if self.shutdown_visible:
+            # SHUTDOWNボタンのエリア判定（見た目より広く判定して押しやすくする）
+            hit_w, hit_h = 100, 50
+            cx, cy = self.width // 2, self.height // 2
+            x1, y1 = cx - hit_w // 2, cy - hit_h // 2
+            x2, y2 = cx + hit_w // 2, cy + hit_h // 2
+            
+            if x1 <= event.x <= x2 and y1 <= event.y <= y2:
+                # ボタンクリック時 -> 終了
+                if self.on_quit_callback:
+                    self.on_quit_callback()
+            else:
+                # エリア外クリック -> 閉じる
+                self.shutdown_visible = False
+                if not (self.is_recording or self.is_processing):
+                     self.root.attributes("-alpha", self.alpha_idle)
 
     def draw_grid(self):
         """背景の医療用グリッドを描画"""
@@ -139,22 +189,45 @@ class RecordingIndicator:
 
     def set_recording(self, recording):
         self.is_recording = recording
-        if recording or self.is_processing:
-            self.root.attributes("-alpha", self.alpha_active)
-        else:
-            self.root.attributes("-alpha", self.alpha_idle)
+        self._update_alpha()
 
     def set_processing(self, processing):
         self.is_processing = processing
-        if processing or self.is_recording:
+        self._update_alpha()
+        
+    def set_volume(self, rms):
+        """音量(RMS)を設定し、0.0-1.0の範囲に正規化して保持"""
+        # RMSは静かな部屋で10-100、話し声で300-2000くらい変動する
+        # ここでは対数的に扱って感度を調整
+        if rms < 300: # 無音閾値を上げてノイズでの誤反応を防ぐ
+            vol = 0
+        else:
+            vol = min((rms - 300) / 2000, 1.0)
+        self.current_volume = vol
+
+    def _update_alpha(self):
+        if self.is_recording or self.is_processing or self.shutdown_visible:
             self.root.attributes("-alpha", self.alpha_active)
         else:
             self.root.attributes("-alpha", self.alpha_idle)
 
+    def interpolate_color(self, start_rgb, end_rgb, progress):
+        """2色間を補間して#RRGGBB文字列を返す"""
+        r = int(start_rgb[0] + (end_rgb[0] - start_rgb[0]) * progress)
+        g = int(start_rgb[1] + (end_rgb[1] - start_rgb[1]) * progress)
+        b = int(start_rgb[2] + (end_rgb[2] - start_rgb[2]) * progress)
+        return f"#{r:02x}{g:02x}{b:02x}"
 
     def update_wave(self):
-        """ガチ医療モニタ風の心電図アニメーション"""
+        """アニメーション描画"""
         self.canvas.delete("all")
+        
+        # === クリックシールド (Click Shield) ===
+        # 背景全体に「見えないがクリック判定を持つ」矩形を置く。
+        # stipple="gray50" で50%の密度で描画（透明ではない扱いになる）。
+        # 色は #010101 (ほぼ黒) だが、透過キー bg="black" とは違う色にする。
+        self.canvas.create_rectangle(0, 0, self.width, self.height, 
+                                     fill="#010101", outline="", stipple="gray50")
         
         # 波形データの生成
         if not self.points:
@@ -162,82 +235,104 @@ class RecordingIndicator:
             
         self.points.pop(0)
         
-        if self.is_recording:
-            # 録音中は動く
-            if random.random() > 0.92:
-                self.points.append(random.randint(2, 12))
-            elif random.random() > 0.85:
-                self.points.append(random.randint(28, 38))
-            else:
-                self.points.append(self.height // 2 + random.randint(-3, 3))
+        base_y = self.height // 2
+        
+        # 状態ごとの描画色と形状ロジック
+        main_color = self.color_idle
+        glow_color = ""
+        line_width = 2.0
+        
+        if self.is_processing:
+            # === 処理中: グリッチ＆カラーシフト ===
+            self.processing_frame += 1
+            progress = (self.processing_frame % 20) / 20.0 # 20フレームで色が一周...せず赤へ向かう
             
-            main_color = self.color_cyan
-            glow_color = self.color_glow
-            main_width = 2.0
+            # 色：オレンジ -> 赤 へランダムに揺らぎながら変化
+            # 完全に赤になりきらず、行ったり来たりさせる演出
+            swing_progress = (math.sin(self.processing_frame * 0.2) + 1) / 2 # 0.0-1.0
+            main_color = self.interpolate_color(self.color_process_start, self.color_process_end, swing_progress)
+            glow_color = self.interpolate_color((100,50,0), (100,0,0), swing_progress)
 
-        elif self.is_processing:
-            # 処理中はPQRST波形 (心電図) をオレンジで表示
-            if not self.pqrst_queue:
-                # PQRST波形の生成 (標準的な鼓動パターン)
-                # フラット -> P -> フラット -> Q -> R -> S -> フラット -> T -> フラット
-                base = self.height // 2
-                # スケール調整
-                h_scale = 0.5 
-                
-                # シーケンス定義 (相対Y座標)
-                sequence = [0]*10 + \
-                           [3]*2 + [0]*2 + \
-                           [-2] + [25] + [-8] + [0]*2 + \
-                           [5]*3 + [0]*15
-                           
-                for y_offset in sequence:
-                   # Y座標は上に行くほど小さいので、マイナスする
-                   self.points.append(base - int(y_offset * h_scale))
-                   # キューにダミーを入れて制御してもいいが、ここではpointsに直接追加せず
-                   # 毎回1つずつpointsに追加するロジックにするため、pqrst_queueを使う
-                   
-                self.pqrst_queue = sequence
+            # 形状：グリッチノイズ
+            # 音量に関係なく激しく乱れる
+            noise = random.randint(-15, 15)
+            self.points.append(base_y + noise)
             
-            # キューから次の値を取り出して追加
-            base = self.height // 2
-            next_val = self.pqrst_queue.pop(0)
-            # ノイズを少し乗せる
-            self.points.append(base - int(next_val) + random.randint(-1, 1))
+        elif self.is_recording:
+            # === 録音中: 音量連動 ===
+            main_color = self.color_recording
+            glow_color = "#008080"
             
-            # キューが空になったら少し待機（フラット）期間を入れるためにNoneなどを入れる手もあるが
-            # 上記 sequence にフラット期間を含めているのでループするだけでOK
+            # 音量に応じて振れ幅を変える
+            # 基本ノイズ(1) + 音量ブースト (感度を微調整)
+            amp = 1 + int(self.current_volume * 80) # 係数を150->80に下げて抑制
+            val = random.randint(-amp, amp)
+            self.points.append(base_y + val)
             
-            main_color = self.color_orange
-            glow_color = "#804000" # オレンジのグロー
-            main_width = 2.0
-
         else:
-            # 待機中は水平
-            self.points.append(self.height // 2)
-            main_color = "#006666" 
-            glow_color = "black"
-            main_width = 2.0
+            # === 待機中: PQRST心拍 ===
+            main_color = self.color_idle
+            glow_color = "#003300"
             
-        # 2. 線を描画
+            if not self.pqrst_queue:
+                # ランダムな間隔で鼓動を入れる
+                # 頻度を上げる (0.96 -> 0.90)
+                if random.random() > 0.90:
+                     # PQRSTシーケンス生成
+                     # フラット -> P -> Q -> R -> S -> T
+                     h = 15 # 基準高さ
+                     seq = [0, 0, -3, -4, -2, 0, 0, 2, 40, -10, -5, 0, 0, -6, -8, -4, 0, 0] 
+                     # Y座標は画面座標系なので、上(マイナス)がプラス波、下(プラス)がマイナス波
+                     # 修正: 上向き(R波のピーク)はYを減らす
+                     
+                     # 修正seq: P(小上), Q(小下), R(大上), S(大下), T(中上)
+                     # 画面Y座標: 上(-), 下(+)
+                     seq = [0]*2 + \
+                           [-3, -4, -2] + [0]*2 + \
+                           [2, 3] + [-25, -30] + [8, 10] + [0]*2 + \
+                           [-5, -7, -4] + [0]*2
+                     self.pqrst_queue = seq
+                else:
+                    self.points.append(base_y)
+            
+            if self.pqrst_queue:
+                 self.points.append(base_y + self.pqrst_queue.pop(0))
+
+        # --- 波形の描画 ---
         coords = []
         for i, y in enumerate(self.points):
             coords.append(i * 4)
             coords.append(y)
             
-        if self.is_recording or self.is_processing:
-            self.canvas.create_line(coords, fill=glow_color, width=4, smooth=True)
-            self.canvas.create_line(coords, fill=main_color, width=main_width, smooth=True)
-            self.canvas.create_line(coords, fill="white", width=0.5, smooth=True)
+        if self.is_processing or self.is_recording:
+             # グロー効果あり
+             self.canvas.create_line(coords, fill=glow_color, width=4, smooth=True)
+        
+        self.canvas.create_line(coords, fill=main_color, width=line_width, smooth=True)
+        
+        # リード点（先頭のドット）
+        if len(coords) >= 2:
+            lx, ly = coords[-2], coords[-1]
+            self.canvas.create_oval(lx-1, ly-1, lx+1, ly+1, fill="white", outline=main_color)
+
+        # --- SHUTDOWNボタン描画 ---
+        if self.shutdown_visible:
+            # 見た目は元のサイズに戻す
+            btn_w, btn_h = 70, 24
+            cx, cy = self.width // 2, self.height // 2
+            x1, y1 = cx - btn_w // 2, cy - btn_h // 2
+            x2, y2 = cx + btn_w // 2, cy + btn_h // 2
             
-            # リード点
-            last_x, last_y = coords[-2], coords[-1]
-            self.canvas.create_oval(last_x-1.5, last_y-1.5, last_x+1.5, last_y+1.5, fill="white", outline=main_color, width=1)
-            self.canvas.create_oval(last_x-3, last_y-3, last_x+3, last_y+3, outline=glow_color, width=1)
-        else:
-            self.canvas.create_line(coords, fill=main_color, width=main_width, smooth=True)
+            # SF風枠
+            self.canvas.create_rectangle(x1, y1, x2, y2, fill="black", outline="red", width=2)
+            self.canvas.create_line(x1, y1, x1+5, y1, fill="white", width=2) # 角の飾り
+            self.canvas.create_line(x1, y1, x1, y1+5, fill="white", width=2)
+            self.canvas.create_line(x2-5, y2, x2, y2, fill="white", width=2)
+            self.canvas.create_line(x2, y2-5, x2, y2, fill="white", width=2)
+            
+            self.canvas.create_text(cx, cy, text="SHUTDOWN", fill="red", font=("Arial", 8, "bold"))
 
-
-        # 50ms ごとに更新
+        # 50ms (20fps) 更新
         self.root.after(50, self.update_wave)
 
     def run(self):
@@ -245,6 +340,7 @@ class RecordingIndicator:
 
     def stop(self):
         self.root.destroy()
+
 
 class VoiceInputApp:
     def __init__(self):
@@ -283,7 +379,13 @@ class VoiceInputApp:
                 prompt,
                 {"mime_type": "audio/wav", "data": audio_bytes}
             ])
-            return response.text.strip()
+            text = response.text.strip()
+            
+            # クライアント側フォールバック: 「改行」という文字そのものが返ってきたら改行コードにする
+            if text in ["改行", "かいぎょう"]:
+                return "\n"
+                
+            return text
         except Exception as e:
             print(f"[Gemini直接処理失敗]: {e}")
             return None
@@ -331,6 +433,13 @@ class VoiceInputApp:
                     while (keyboard.is_pressed(self.recording_key) or keyboard.is_pressed(165)) and self.running:
                         data = stream.read(CHUNK, exception_on_overflow=False)
                         frames.append(data)
+                        
+                        # リアルタイム波形更新
+                        try:
+                            rms = audioop.rms(data, 2)
+                            self.indicator.set_volume(rms)
+                        except:
+                            pass
                     
                     # 末尾の切れを防ぐため、キーを離した直後の音をわずかに（約0.3秒）追加録音
                     for _ in range(5):
@@ -350,6 +459,8 @@ class VoiceInputApp:
                         # 音量のチェック (無音時はスキップ)
                         rms = audioop.rms(raw_data, 2) # 2はpaInt16のバイト数
                         print(f" (入力音量: {rms})", end="", flush=True)
+                        # self.indicator.set_volume(rms) # ここでの更新は遅いので削除（ループ内で実施済み）
+
                         
                         if rms > self.energy_threshold:
                             container = io.BytesIO()
@@ -416,8 +527,12 @@ class VoiceInputApp:
         threading.Thread(target=self.record_audio, daemon=True).start()
         threading.Thread(target=self.main_loop, daemon=True).start()
         
-        # コンテキストメニュー設定
-        self.indicator.setup_context_menu(self.on_quit)
+        # コンテキストメニュー設定（不要になったので削除）
+        # self.indicator.setup_context_menu(self.on_quit)
+        
+        # コールバック設定
+        self.indicator.set_callback(self.on_quit)
+
         
         # Tkinter (インジケータ) をメインスレッドで実行
         self.indicator.run()
