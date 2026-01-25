@@ -1,0 +1,11 @@
+{
+  "personas": [
+    {
+      "name": "標準 (旧設定)",
+      "instruction": ""
+    }
+  ],
+  "active_index": 0,
+  "custom_instruction": "",
+  "theme": "Relax Navy"
+}

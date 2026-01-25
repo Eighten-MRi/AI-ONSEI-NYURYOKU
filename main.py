@@ -844,17 +844,16 @@ class VoiceInputApp:
         """以前動作していた安定版をベースに、メニュー干渉対策を適用"""
         if not text: return
         try:
-            # 1. クリップボードにコピーして安定を待つ
+            # 1. クリップボードにコピー
             pyperclip.copy(text)
-            time.sleep(0.1) 
+            time.sleep(0.05) 
             
-            # 2. Windowsのメニューバー干渉（Altキー残滓）を強制解除するハック
-            # Ctrlを単押しすることで、Altでアクティブになったメニューモードを終了させ、
-            # フォーカスを入力欄に確実に取り戻します。
+            # 2. フォーカス復帰ハック (中和法と併用し、確実にフォーカスを確保)
+            # 既に中和されているはずだが、念のため Ctrl タップでフォーカスを再確認
             pyautogui.press('ctrl')
-            time.sleep(0.05)
+            time.sleep(0.01)
             
-            # 3. 貼り付け実行 (最も互換性の高い方法)
+            # 3. 貼り付け実行
             pyautogui.hotkey('ctrl', 'v')
             
             print(f" -> ペースト完了: {len(text)} 文字")
@@ -883,7 +882,14 @@ class VoiceInputApp:
                     self.is_recording = True
                     self.indicator.set_recording(True)
 
-                    # Altキー押下イベントを遮断 (メニュー起動を最小限にする)
+                    # === 【重要】Altキーの中和処理 (Neutralization) ===
+                    # Altだけが押されて離されるとWindowsのメニューが反応する。
+                    # 録音開始（Alt押下）直後にShiftを空打ちすることで、
+                    # Windowsに「Alt単体押しではない」と認識させ、メニュー起動を根絶する。
+                    keyboard.press('shift')
+                    keyboard.release('shift')
+
+                    # Altキー押下イベントを遮断 (他のアプリへの漏洩防止)
                     try: keyboard.block_key(165)
                     except: pass
                     
