@@ -69,6 +69,26 @@ SYSTEM_PROMPT = (
 )
 # 可能な限りユーザーが発言したそのままのニュアンスを保つことが最優先です。
 
+class SettingsWindow:
+    def __init__(self, parent):
+        self.window = tk.Toplevel(parent)
+        self.window.title("設定")
+        self.window.geometry("400x300")
+        
+        # Word Registration UI (Placeholder)
+        lbl = tk.Label(self.window, text="単語登録", font=("Arial", 12, "bold"))
+        lbl.pack(pady=10)
+        
+        lbl_desc = tk.Label(self.window, text="ここに登録した単語はシステムプロンプトに反映されます（予定）")
+        lbl_desc.pack(pady=5)
+        
+        self.text_area = tk.Text(self.window, height=10, width=40)
+        self.text_area.pack(pady=5)
+        self.text_area.insert("1.0", "例: \nカギカッコ -> 「」\nマル -> 。")
+        
+        btn_close = tk.Button(self.window, text="閉じる", command=self.window.destroy)
+        btn_close.pack(pady=10)
+
 class RecordingIndicator:
     """画面中央下に表示される心電図風インジケータ"""
     def __init__(self):
@@ -94,7 +114,7 @@ class RecordingIndicator:
         self.canvas.pack()
         
         # キャンバスイベント
-        self.canvas.bind("<Button-3>", self.show_shutdown_button) # 右クリック
+        self.canvas.bind("<Button-3>", self.show_menu)            # 右クリック (メニュー)
         self.canvas.bind("<Button-1>", self.start_move)           # 左クリック（ドラッグ開始）
         self.canvas.bind("<B1-Motion>", self.do_move)             # ドラッグ移動
         self.canvas.bind("<ButtonRelease-1>", self.stop_move)     # ドラッグ終了（＆クリック判定）
@@ -107,7 +127,7 @@ class RecordingIndicator:
         self.is_recording = False
         self.is_processing = False
         self.is_error = False # エラー状態
-        self.shutdown_visible = False
+        self.menu_visible = False
         self.drag_data = {"x": 0, "y": 0, "moved": False} # ドラッグ用データ
         
         # アニメーション用変数
@@ -166,46 +186,59 @@ class RecordingIndicator:
             self.on_click(event)
         self.drag_data["moved"] = False
 
-    def show_shutdown_button(self, event):
-        """右クリックでSHUTDOWNボタンを表示"""
-        # 既に表示中なら何もしない（トグルにすると二重クリックで消えるのが煩わしいかもだが今回はトグル維持か確認。
-        # 要望は「出にくい」への対処と「自動で消える」なので、強制表示で良い。
-        
-        self.shutdown_visible = True
+    def show_menu(self, event):
+        """右クリックでメニューを表示"""
+        self.menu_visible = True
         self.root.attributes("-alpha", self.alpha_active)
         
-        # 既存のタイマーがあればキャンセル（連続クリック対策）
+        # 既存のタイマーがあればキャンセル
         if hasattr(self, "_hide_timer") and self._hide_timer:
             self.root.after_cancel(self._hide_timer)
             
-        # 1.5秒後に自動で隠す
-        self._hide_timer = self.root.after(1500, self.hide_shutdown_button)
+        # 3秒後に自動で隠す
+        self._hide_timer = self.root.after(3000, self.hide_menu)
 
-    def hide_shutdown_button(self):
-        """SHUTDOWNボタンを隠す"""
-        if self.shutdown_visible:
-            self.shutdown_visible = False
-            if not (self.is_recording or self.is_processing):
-                 self.root.attributes("-alpha", self.alpha_idle)
+    def hide_menu(self):
+        """メニューを隠す"""
+        if self.menu_visible:
+            self.menu_visible = False
+            self._update_alpha()
+
+    def open_settings(self):
+        """設定ウィンドウを開く"""
+        SettingsWindow(self.root)
 
     def on_click(self, event):
-        """クリック判定（SHUTDOWNボタンなど）"""
-        if self.shutdown_visible:
-            # SHUTDOWNボタンのエリア判定（見た目より広く判定して押しやすくする）
-            hit_w, hit_h = 100, 50
+        """クリック判定（メニューなど）"""
+        if self.menu_visible:
+            # メニューエリア判定
+            menu_w, menu_h = 100, 65
             cx, cy = self.width // 2, self.height // 2
-            x1, y1 = cx - hit_w // 2, cy - hit_h // 2
-            x2, y2 = cx + hit_w // 2, cy + hit_h // 2
             
-            if x1 <= event.x <= x2 and y1 <= event.y <= y2:
-                # ボタンクリック時 -> 終了
+            # SETTINGSボタン (上)
+            btn_h = 28
+            spacing = 5
+            top_y = cy - menu_h // 2
+            
+            # SETTINGS判定
+            sx1, sx2 = cx - menu_w // 2, cx + menu_w // 2
+            sy1, sy2 = top_y, top_y + btn_h
+            if sx1 <= event.x <= sx2 and sy1 <= event.y <= sy2:
+                self.open_settings()
+                self.hide_menu()
+                return
+
+            # SHUTDOWN判定
+            btm_y = top_y + btn_h + spacing
+            bx1, bx2 = sx1, sx2
+            by1, by2 = btm_y, btm_y + btn_h
+            if bx1 <= event.x <= bx2 and by1 <= event.y <= by2:
                 if self.on_quit_callback:
                     self.on_quit_callback()
-            else:
-                # エリア外クリック -> 閉じる
-                self.shutdown_visible = False
-                if not (self.is_recording or self.is_processing):
-                     self.root.attributes("-alpha", self.alpha_idle)
+                return
+            
+            # メニュー外クリック -> 閉じる
+            self.hide_menu()
 
     def draw_grid(self):
         """背景の医療用グリッドを描画"""
@@ -244,7 +277,7 @@ class RecordingIndicator:
         self.current_volume = vol
 
     def _update_alpha(self):
-        if self.is_recording or self.is_processing or self.shutdown_visible or self.is_error:
+        if self.is_recording or self.is_processing or self.menu_visible or self.is_error:
             self.root.attributes("-alpha", self.alpha_active)
         else:
             self.root.attributes("-alpha", self.alpha_idle)
@@ -366,22 +399,43 @@ class RecordingIndicator:
             lx, ly = coords[-2], coords[-1]
             self.canvas.create_oval(lx-1, ly-1, lx+1, ly+1, fill="white", outline=main_color)
 
-        # --- SHUTDOWNボタン描画 ---
-        if self.shutdown_visible:
-            # 見た目は元のサイズに戻す
-            btn_w, btn_h = 70, 24
+        # --- メニュー描画 ---
+        if self.menu_visible:
+            menu_w, menu_h = 100, 65 # 描画サイズ
+            btn_h = 28
+            spacing = 5
+            
             cx, cy = self.width // 2, self.height // 2
-            x1, y1 = cx - btn_w // 2, cy - btn_h // 2
-            x2, y2 = cx + btn_w // 2, cy + btn_h // 2
+            # 全体の背景（少し暗く）
+            self.canvas.create_rectangle(cx - menu_w//2 - 5, cy - menu_h//2 - 5,
+                                         cx + menu_w//2 + 5, cy + menu_h//2 + 5,
+                                         fill="black", stipple="gray75", outline="")
+
+            # Helper for button drawing
+            def draw_btn(text, by, color):
+                bx1 = cx - menu_w // 2
+                bx2 = cx + menu_w // 2
+                by1 = by
+                by2 = by + btn_h
+                
+                # 枠
+                self.canvas.create_rectangle(bx1, by1, bx2, by2, fill="black", outline=color, width=2)
+                # 角飾り
+                d = 5
+                self.canvas.create_line(bx1, by1, bx1+d, by1, fill="white", width=2)
+                self.canvas.create_line(bx1, by1, bx1, by1+d, fill="white", width=2)
+                self.canvas.create_line(bx2-d, by2, bx2, by2, fill="white", width=2)
+                self.canvas.create_line(bx2, by2-d, bx2, by2, fill="white", width=2)
+                
+                self.canvas.create_text(cx, (by1+by2)//2, text=text, fill=color, font=("Arial", 8, "bold"))
+
+            # SETTINGS (Cyan)
+            top_y = cy - menu_h // 2
+            draw_btn("SETTINGS", top_y, "#00FFFF")
             
-            # SF風枠
-            self.canvas.create_rectangle(x1, y1, x2, y2, fill="black", outline="red", width=2)
-            self.canvas.create_line(x1, y1, x1+5, y1, fill="white", width=2) # 角の飾り
-            self.canvas.create_line(x1, y1, x1, y1+5, fill="white", width=2)
-            self.canvas.create_line(x2-5, y2, x2, y2, fill="white", width=2)
-            self.canvas.create_line(x2, y2-5, x2, y2, fill="white", width=2)
-            
-            self.canvas.create_text(cx, cy, text="SHUTDOWN", fill="red", font=("Arial", 8, "bold"))
+            # SHUTDOWN (Red)
+            btm_y = top_y + btn_h + spacing
+            draw_btn("SHUTDOWN", btm_y, "#FF4444")
 
         # 50ms (20fps) 更新
         self.root.after(50, self.update_wave)
