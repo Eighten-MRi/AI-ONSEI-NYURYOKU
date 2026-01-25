@@ -5,6 +5,7 @@ import sys
 import platform
 import queue
 import socket # 多重起動チェック用
+import json
 
 import speech_recognition as sr
 import keyboard
@@ -27,6 +28,8 @@ def resource_path(relative_path):
 import tkinter as tk
 import random
 import math
+
+from ui_widgets import RoundedButton, RoundedEntry
 
 
 
@@ -58,66 +61,459 @@ def is_already_running():
 # システムプロンプトの設定
 SYSTEM_PROMPT = (
     "あなたは高精度な文字起こしアシスタントです。ユーザーの音声認識テキストを受け取り、以下の処理のみを行ってください。\n"
-    "1. 文脈から誤変換と思われる漢字のみを修正する。\n"
-    "2. フィラーは削除するが、感嘆詞は維持する。\n"
-    "3. 方言は維持する。標準語への変換を行わず、聞こえたまま忠実に書き起こすこと。\n"
-    "4. 【重要】文末に勝手に句点「。」を付けないこと。これは絶対です。\n"
-    "5. 認識結果が「まる」のみの場合は「。」を出力する。\n"
-    "6. 認識結果が「てん」のみの場合は「、」を出力する。\n"
-    "7. 認識結果が「改行」または「かいぎょう」のみの場合は改行コード(\\n)を出力する。\n"
+    "1. 文脈から誤変換と思われる漢字を修正する。\n"
+    "2. 「あー」「えー」「あの」「その」などのフィラー（言い淀み）や、どもり（重複した音）は綺麗に削除する。\n"
+    "3. 方言は維持する。標準語への変換を行わず、聞こえたまま忠実に書き起こす。\n"
+    "4. 音声が聞き取れない、または意味不明なノイズのみの場合は、何も出力しないこと（ハルシネーション防止）。\n"
+    "5. 【操作コマンドの処理】\n"
+    "   - 「まる」と言われたら、文末だとしても「。」に変換する。\n"
+    "   - 「てん」と言われたら「、」に変換する。\n"
+    "   - 「改行（かいぎょう）」と言われたら、実際の改行コード(\\n)を出力する（文字として『/』や『\\n』を出さない）。\n"
+    "   - これらが文中に混ざっている場合も、文脈に応じて記号に変換する。\n"
+    "6. 基本的に文末に勝手に句点「。」を付けない（「まる」と言われない限り）。\n"
+    "7. 【言い直し・訂正の処理】\n"
+    "   - 文中で「あ、違う」「あ、間違えた」「訂正」などの自己訂正が入った場合、その発言自体と、直前の誤った箇所を削除し、正しい言い直し部分のみを採用する。\n"
     "出力は修正後のテキストのみを行ってください。"
 )
 # 可能な限りユーザーが発言したそのままのニュアンスを保つことが最優先です。
 
+THEMES = {
+    "Relax Navy": {
+        "bg": "#1A2332", "fg_primary": "#E5E9F0", "fg_header": "#88C0D0", "fg_danger": "#BF616A",
+        "input_bg": "#293245", "input_fg": "#E5E9F0", 
+        "btn_bg": "#293245", "btn_fg": "#E5E9F0",
+        "btn_danger_bg": "#252020", "btn_danger_fg": "#BF616A",
+        "select_bg": "#434C5E", "select_fg": "#E5E9F0", "border": "#3B4252",
+        "active_bg": "#88C0D0", "active_fg": "#1A2332", "font": "Verdana"
+    },
+    "Cafe Mocha": {
+        "bg": "#3E3535", "fg_primary": "#E8DDCB", "fg_header": "#D4A373", "fg_danger": "#C2716F",
+        "input_bg": "#4E4444", "input_fg": "#E8DDCB", 
+        "btn_bg": "#4E4444", "btn_fg": "#E8DDCB",
+        "btn_danger_bg": "#352e2e", "btn_danger_fg": "#C2716F",
+        "select_bg": "#D4A373", "select_fg": "#3E3535", "border": "#594D4D",
+        "active_bg": "#D4A373", "active_fg": "#3E3535", "font": "Verdana"
+    },
+    "Gruvbox": {
+        "bg": "#282828", "fg_primary": "#ebdbb2", "fg_header": "#fabd2f", "fg_danger": "#fb4934",
+        "input_bg": "#3c3836", "input_fg": "#ebdbb2", 
+        "btn_bg": "#3c3836", "btn_fg": "#ebdbb2",
+        "btn_danger_bg": "#202020", "btn_danger_fg": "#fb4934",
+        "select_bg": "#d79921", "select_fg": "#282828", "border": "#504945",
+        "active_bg": "#b8bb26", "active_fg": "#282828", "font": "Verdana"
+    },
+    "Cyberpunk": {
+        "bg": "#050510", "fg_primary": "#00ffff", "fg_header": "#00ff99", "fg_danger": "#ff0055",
+        "input_bg": "#1a1a30", "input_fg": "#ffffff", 
+        "btn_bg": "#1a1a30", "btn_fg": "#00ffff",
+        "btn_danger_bg": "#100000", "btn_danger_fg": "#ff0055",
+        "select_bg": "#00ffff", "select_fg": "#000000", "border": "#00ffff",
+        "active_bg": "#00ff99", "active_fg": "#000000", "font": "Consolas"
+    }
+}
+
 class SettingsWindow:
-    def __init__(self, parent):
+    def __init__(self, parent, on_quit_callback=None):
         self.window = tk.Toplevel(parent)
-        self.window.title("設定")
-        self.window.geometry("400x300")
+        self.window.title("SYSTEM CONFIG") # Title update
+        self.window.geometry("720x520") 
+        self.on_quit_callback = on_quit_callback
         
-        # Word Registration UI (Placeholder)
-        lbl = tk.Label(self.window, text="単語登録", font=("Arial", 12, "bold"))
-        lbl.pack(pady=10)
+        self.window.attributes("-alpha", 1.0)
+        self.window.attributes("-topmost", True)
+        self.window.overrideredirect(False)
+        self.parent = parent
         
-        lbl_desc = tk.Label(self.window, text="ここに登録した単語はシステムプロンプトに反映されます（予定）")
-        lbl_desc.pack(pady=5)
+        self.settings_file = resource_path("settings.json")
+        self.settings = self.load_settings()
         
-        self.text_area = tk.Text(self.window, height=10, width=40)
-        self.text_area.pack(pady=5)
-        self.text_area.insert("1.0", "例: \nカギカッコ -> 「」\nマル -> 。")
+        # Theme Setup
+        self.current_theme_name = self.settings.get("theme", "Relax Navy")
+        if self.current_theme_name not in THEMES:
+             self.current_theme_name = "Relax Navy"
+        self.colors = THEMES[self.current_theme_name]
         
-        btn_close = tk.Button(self.window, text="閉じる", command=self.window.destroy)
-        btn_close.pack(pady=10)
+        # Font Setup
+        base_font = self.colors.get("font", "Verdana")
+        self.font_main = (base_font, 10)
+        self.font_bold = (base_font, 10, "bold")
+        self.font_header = (base_font, 11, "bold")
+        self.font_small = (base_font, 8)
+        
+        self.window.config(bg=self.colors["bg"])
+        
+        # UI Variables
+        self.current_index = self.settings.get("active_index", 0)
+        if self.current_index >= len(self.settings["personas"]):
+            self.current_index = 0
+            
+        self.var_name = tk.StringVar()
+
+        # === Layout ===
+        # Main Container with Border
+        self.main_frame = tk.Frame(self.window, bg=self.colors["bg"], 
+                              highlightbackground=self.colors["border"], highlightthickness=2)
+        self.main_frame.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
+        
+        self.rebuild_ui()
+
+    def rebuild_ui(self):
+        # Clear existing widgets in main_frame
+        for widget in self.main_frame.winfo_children():
+            widget.destroy()
+            
+        # Update Main Frame BG
+        self.main_frame.config(bg=self.colors["bg"], highlightbackground=self.colors["border"])
+        self.window.config(bg=self.colors["bg"])
+
+        # Split Layout
+        # Top Header
+        header_frame = tk.Frame(self.main_frame, bg=self.colors["bg"])
+        header_frame.pack(fill=tk.X, padx=10, pady=10)
+        tk.Label(header_frame, text=f"設定 / ペルソナ管理 [{self.current_theme_name}]", 
+                 font=self.font_header, bg=self.colors["bg"], fg=self.colors["fg_header"]).pack(side=tk.LEFT)
+        
+        # Save Indicator (Top Right)
+        self.lbl_save_status = tk.Label(header_frame, text="", font=self.font_small, bg=self.colors["bg"], fg=self.colors["fg_primary"])
+        self.lbl_save_status.pack(side=tk.RIGHT)
+
+        # Content Area
+        content_frame = tk.Frame(self.main_frame, bg=self.colors["bg"])
+        content_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=5) # More side padding
+        
+        # --- Left Panel (List) ---
+        frame_left = tk.Frame(content_frame, bg=self.colors["bg"], width=240)
+        frame_left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10)) # Expanding left panel properly
+        
+        tk.Label(frame_left, text="ペルソナ一覧", font=self.font_bold, 
+                 bg=self.colors["bg"], fg=self.colors["fg_header"]).pack(anchor=tk.W, pady=(0,10))
+        
+        # List Container
+        list_container = tk.Frame(frame_left, bg=self.colors["border"], padx=1, pady=1)
+        list_container.pack(fill=tk.BOTH, expand=True) # Full height
+        
+        self.listbox = tk.Listbox(list_container, exportselection=False, 
+                                  bg=self.colors["input_bg"], fg=self.colors["input_fg"],
+                                  selectbackground=self.colors["select_bg"], selectforeground=self.colors["select_fg"],
+                                  highlightthickness=0, borderwidth=0, font=self.font_main)
+        self.listbox.pack(fill=tk.BOTH, expand=True, padx=5, pady=5) # Internal padding
+        
+        self.listbox.bind("<<ListboxSelect>>", self.on_select)
+        
+        # List Buttons (Hierarchy: Secondary, Danger)
+        frame_list_btns = tk.Frame(frame_left, bg=self.colors["bg"])
+        frame_list_btns.pack(fill=tk.X, pady=15)
+        
+        self.create_flat_btn(frame_list_btns, "新規作成", self.add_persona, style="secondary").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        self.create_flat_btn(frame_list_btns, "削除", self.delete_persona, style="danger").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 0))
+
+        # --- Right Panel (Details) ---
+        frame_right = tk.Frame(content_frame, bg=self.colors["bg"])
+        frame_right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True) # Expanding right panel properly
+        
+        # Name Edit
+        frame_name = tk.Frame(frame_right, bg=self.colors["bg"])
+        frame_name.pack(fill=tk.X, pady=(0, 15))
+        tk.Label(frame_name, text="識別名 (ID):", font=self.font_bold, bg=self.colors["bg"], fg=self.colors["fg_header"]).pack(side=tk.LEFT, padx=(0,10))
+        
+        self.entry_name = RoundedEntry(frame_name, textvariable=self.var_name, 
+                                   bg=self.colors["input_bg"], fg=self.colors["input_fg"], 
+                                   insertbackground=self.colors["fg_primary"],
+                                   font=self.font_main,
+                                   radius=8, height=36)
+        self.entry_name.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5) # Internal padding (ipady) handled by widget height
+        self.entry_name.bind_entry("<FocusOut>", self.on_name_change) 
+        
+        # Instruction Edit
+        tk.Label(frame_right, text="AI指示プロンプト:", font=self.font_bold, bg=self.colors["bg"], fg=self.colors["fg_header"]).pack(anchor=tk.W, pady=(0, 5))
+        
+        text_container = tk.Frame(frame_right, bg=self.colors["border"], padx=1, pady=1)
+        text_container.pack(fill=tk.BOTH, expand=True)
+        
+        self.text_instruction = tk.Text(text_container, height=1, width=40, # Height is relative, will expand
+                                        bg=self.colors["input_bg"], fg=self.colors["input_fg"], 
+                                        insertbackground=self.colors["fg_primary"],
+                                        highlightthickness=0, borderwidth=0, font=self.font_main,
+                                        padx=10, pady=10) # Internal padding
+        self.text_instruction.pack(fill=tk.BOTH, expand=True)
+        self.text_instruction.bind("<KeyRelease>", self.on_text_change)
+        
+        
+        # === Footer ===
+        frame_footer = tk.Frame(self.main_frame, bg=self.colors["bg"])
+        frame_footer.pack(fill=tk.X, padx=15, pady=15)
+
+        # Left Side (Theme, Active)
+        footer_left = tk.Frame(frame_footer, bg=self.colors["bg"])
+        footer_left.pack(side=tk.LEFT)
+
+        # Theme Cycle Button (Secondary)
+        self.create_flat_btn(footer_left, "🎨 テーマ切替", self.cycle_theme, style="secondary").pack(side=tk.LEFT, padx=(0, 15))
+
+        # Active Status + Button
+        self.lbl_active_status = tk.Label(footer_left, text="", font=self.font_bold, bg=self.colors["bg"])
+        self.lbl_active_status.pack(side=tk.LEFT, padx=(0, 10))
+        
+        self.btn_activate = self.create_flat_btn(footer_left, "有効化", self.set_active_persona, style="primary") # Primary
+        self.btn_activate.pack(side=tk.LEFT)
+
+        # Right Side (Close, Quit)
+        footer_right = tk.Frame(frame_footer, bg=self.colors["bg"])
+        footer_right.pack(side=tk.RIGHT)
+
+        self.create_flat_btn(footer_right, "閉じる", self.window.destroy, style="primary").pack(side=tk.LEFT, padx=5)
+        self.create_flat_btn(footer_right, "アプリ終了", self.on_shutdown, style="danger").pack(side=tk.LEFT, padx=5)
+        
+        # Initialize
+        self.refresh_list()
+        self.listbox.selection_set(self.current_index)
+        self.load_details(self.current_index)
+        self.update_active_display()
+
+    def cycle_theme(self):
+        theme_names = list(THEMES.keys())
+        try:
+            curr_idx = theme_names.index(self.current_theme_name)
+        except ValueError:
+            curr_idx = 0
+            
+        next_idx = (curr_idx + 1) % len(theme_names)
+        self.current_theme_name = theme_names[next_idx]
+        self.colors = THEMES[self.current_theme_name]
+        
+        # Save theme
+        self.settings["theme"] = self.current_theme_name
+        self.save_settings()
+        
+        # Update fonts in case theme changes font
+        base_font = self.colors.get("font", "Verdana")
+        self.font_main = (base_font, 10)
+        self.font_bold = (base_font, 10, "bold")
+        self.font_header = (base_font, 11, "bold")
+        self.font_small = (base_font, 8)
+        
+        # Rebuild UI
+        self.rebuild_ui()
+
+    def create_flat_btn(self, parent, text, command, style="secondary"):
+        """Custom Flat Button with Hierarchy"""
+        # Determine colors based on style
+        bg_color = self.colors["btn_bg"]
+        fg_color = self.colors["btn_fg"]
+        
+        if style == "primary":
+            # Primary: Active Color Background (e.g., Blue/Cyan/Green)
+            bg_color = self.colors["active_bg"]
+            fg_color = self.colors["active_fg"]
+        elif style == "danger":
+            # Danger: Dark Red BG or similar
+            bg_color = self.colors.get("btn_danger_bg", "#300000")
+            fg_color = self.colors.get("btn_danger_fg", "#ff0000")
+        else: # secondary
+             # Secondary: Default Button BG
+             pass
+            
+        btn = RoundedButton(parent, text=text, command=command,
+                        bg=bg_color, fg=fg_color,
+                        active_bg=fg_color, active_fg=bg_color,
+                        font=self.font_bold,
+                        padx=16, pady=8, radius=8)
+        return btn
+
+    def load_settings(self):
+        default_personas = [{"name": "標準", "instruction": ""}]
+        default_settings = {"personas": default_personas, "active_index": 0}
+        
+        if os.path.exists(self.settings_file):
+            try:
+                with open(self.settings_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    
+                    # Migration: Old format to new format
+                    if "personas" not in data:
+                        # Convert old custom_instruction to a persona
+                        old_instr = data.get("custom_instruction", "")
+                        data["personas"] = [{"name": "標準 (旧設定)", "instruction": old_instr}]
+                        data["active_index"] = 0
+                        # Clean up old key if desired, but keeping minimal change is safer
+                    
+                    return {**default_settings, **data}
+            except:
+                pass
+        return default_settings
+
+    def show_save_indicator(self):
+        """Show a temporary 'SAVED' message"""
+        self.lbl_save_status.config(text="[ 保存完了 (SAVED) ]")
+        # Remove existing timer if any
+        if hasattr(self, "_save_timer") and self._save_timer:
+            self.window.after_cancel(self._save_timer)
+        self._save_timer = self.window.after(2000, lambda: self.lbl_save_status.config(text=""))
+
+    def save_settings(self):
+        try:
+            with open(self.settings_file, "w", encoding="utf-8") as f:
+                json.dump(self.settings, f, ensure_ascii=False, indent=2)
+            self.show_save_indicator()
+        except Exception as e:
+            print(f"Save failed: {e}")
+
+    def refresh_list(self):
+        self.listbox.delete(0, tk.END)
+        for i, p in enumerate(self.settings["personas"]):
+            name = p["name"]
+            # Active indicator
+            if i == self.settings["active_index"]:
+                name = f"● {name}" 
+            self.listbox.insert(tk.END, name)
+            
+            # ハイライトは選択色と同じだが、一覧でも文字色を変えてわかりやすくする
+            if i == self.settings["active_index"]:
+                 self.listbox.itemconfig(i, fg=self.colors["fg_header"]) # Yellowish for active item text in list
+
+    def on_select(self, event):
+        sel = self.listbox.curselection()
+        if sel:
+            index = sel[0]
+            self.current_index = index 
+            self.load_details(index)
+            self.update_active_display()
+
+    def load_details(self, index):
+        if 0 <= index < len(self.settings["personas"]):
+            p = self.settings["personas"][index]
+            self.var_name.set(p["name"])
+            self.text_instruction.delete("1.0", tk.END)
+            self.text_instruction.insert("1.0", p["instruction"])
+
+    def on_name_change(self, event):
+        name = self.var_name.get()
+        if 0 <= self.current_index < len(self.settings["personas"]):
+            self.settings["personas"][self.current_index]["name"] = name
+            self.save_settings()
+            self.refresh_list()
+            self.listbox.selection_clear(0, tk.END)
+            self.listbox.selection_set(self.current_index)
+
+    def on_text_change(self, event):
+        text = self.text_instruction.get("1.0", tk.END).strip()
+        if 0 <= self.current_index < len(self.settings["personas"]):
+            self.settings["personas"][self.current_index]["instruction"] = text
+            self.save_settings()
+
+    def add_persona(self):
+        new_persona = {"name": "新規ペルソナ (NEW)", "instruction": ""}
+        self.settings["personas"].append(new_persona)
+        self.save_settings()
+        self.refresh_list()
+        new_idx = len(self.settings["personas"]) - 1
+        self.listbox.selection_clear(0, tk.END)
+        self.listbox.selection_set(new_idx)
+        self.current_index = new_idx
+        self.load_details(new_idx)
+        self.update_active_display()
+
+    def delete_persona(self):
+        if len(self.settings["personas"]) <= 1:
+            return 
+            
+        del self.settings["personas"][self.current_index]
+        
+        if self.current_index == self.settings["active_index"]:
+            self.settings["active_index"] = 0
+        elif self.current_index < self.settings["active_index"]:
+            self.settings["active_index"] -= 1
+            
+        if self.current_index >= len(self.settings["personas"]):
+            self.current_index = len(self.settings["personas"]) - 1
+            
+        self.save_settings()
+        self.refresh_list()
+        self.listbox.selection_set(self.current_index)
+        self.load_details(self.current_index)
+        self.update_active_display()
+
+    def set_active_persona(self):
+        self.settings["active_index"] = self.current_index
+        self.save_settings()
+        self.refresh_list()
+        self.listbox.selection_set(self.current_index) 
+        self.update_active_display()
+
+    def update_active_display(self):
+        if self.current_index == self.settings["active_index"]:
+            # Active State
+            self.lbl_active_status.config(text="[ 稼働中 ]", fg=self.colors["active_bg"])
+            self.btn_activate.config(state=tk.DISABLED, text="現在使用中", 
+                                     disabled_bg=self.colors["active_bg"], disabled_fg=self.colors["active_fg"])
+        else:
+            # Idle State
+            self.lbl_active_status.config(text="", fg="black")
+            self.btn_activate.config(state=tk.NORMAL, text="このペルソナを有効化", 
+                                     bg=self.colors["btn_bg"], fg=self.colors["btn_fg"])
+
+    def on_shutdown(self):
+        if self.on_quit_callback:
+            self.window.destroy()
+            self.on_quit_callback()
+
+
 
 class RecordingIndicator:
     """画面中央下に表示される心電図風インジケータ"""
     def __init__(self):
-        self.root = tk.Tk()
-        self.root.title("Recording Indicator")
+        # === Dual Window Strategy ===
+        # 1. self.root (Click Layer):
+        #    - 背景は黒 (#000000) だが、透過度(alpha)を 0.01 に設定。
+        #    - ほぼ完全な透明に見えるが、Windows上で「ウィンドウ」として認識されるためクリックを捕獲できる。
+        # 2. self.visual_window (Visual Layer):
+        #    - self.root の上に重なる Toplevel ウィンドウ。
+        #    - 透過キー (transparentcolor) を黒に設定し、背景を完全に透過させる。
+        #    - ここに Canvas を配置し、波形のみを高不透明度 (alpha 0.8-0.9) で描画する。
         
-        # ウィンドウ設定: 枠なし、最前面、背景透過
+        self.root = tk.Tk()
+        self.root.title("Recording Indicator (Click Layer)")
+        
+        # Click Layer Setup
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
-        self.root.attributes("-transparentcolor", "black")
-        self.root.config(bg="black")
+        self.root.attributes("-alpha", 0.01) # ほぼ透明だがクリック可能
+        self.root.config(bg="#000000")
         
         # サイズと位置 (画面中央下)
-        width, height = 100, 40 # 幅を1/3程度に縮小しスリム化
+        width, height = 100, 40 
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
         x = (screen_width - width) // 2
         y = screen_height - height - 60
         self.root.geometry(f"{width}x{height}+{x}+{y}")
         
-        # キャンバス設定
-        self.canvas = tk.Canvas(self.root, width=width, height=height, bg="black", highlightthickness=0)
+        # Visual Layer Setup
+        self.visual_window = tk.Toplevel(self.root)
+        self.visual_window.title("Recording Indicator (Visual Layer)")
+        self.visual_window.overrideredirect(True)
+        self.visual_window.attributes("-topmost", True)
+        self.visual_window.attributes("-transparentcolor", "black")
+        self.visual_window.config(bg="black")
+        self.visual_window.geometry(f"{width}x{height}+{x}+{y}")
+        
+        # Canvasは Visual Layer に配置 (背景は透過キーの黒)
+        self.canvas = tk.Canvas(self.visual_window, width=width, height=height, bg="black", highlightthickness=0)
         self.canvas.pack()
         
-        # キャンバスイベント
-        self.canvas.bind("<Button-3>", self.show_menu)            # 右クリック (メニュー)
-        self.canvas.bind("<Button-1>", self.start_move)           # 左クリック（ドラッグ開始）
-        self.canvas.bind("<B1-Motion>", self.do_move)             # ドラッグ移動
-        self.canvas.bind("<ButtonRelease-1>", self.stop_move)     # ドラッグ終了（＆クリック判定）
+        # === イベントバインディング (両方のウィンドウで設定) ===
+        # Click Layer: 背景クリック用
+        self.root.bind("<Button-3>", self.open_settings_handler)
+        self.root.bind("<Button-1>", self.start_move)
+        self.root.bind("<B1-Motion>", self.do_move)
+        self.root.bind("<ButtonRelease-1>", self.stop_move)
+        
+        # Visual Layer: 波形(線)クリック用
+        # Canvas自体がイベントを受ける
+        self.canvas.bind("<Button-3>", self.open_settings_handler)
+        self.canvas.bind("<Button-1>", self.start_move)
+        self.canvas.bind("<B1-Motion>", self.do_move)
+        self.canvas.bind("<ButtonRelease-1>", self.stop_move)
         
         self.width = width
         self.height = height
@@ -126,36 +522,50 @@ class RecordingIndicator:
         # 状態フラグ
         self.is_recording = False
         self.is_processing = False
-        self.is_error = False # エラー状態
-        self.menu_visible = False
-        self.drag_data = {"x": 0, "y": 0, "moved": False} # ドラッグ用データ
+        self.is_error = False 
+        self.drag_data = {"x": 0, "y": 0, "moved": False}
         
         # アニメーション用変数
-        self.current_volume = 0 # 音量 (0.0 - 1.0相当)
-        self.pqrst_queue = []   # 心拍波形キュー
-        self.processing_frame = 0 # 処理中アニメーション用フレーム
-        self.error_frame = 0    # エラー表示フレームカウンター
+        self.current_volume = 0 
+        self.pqrst_queue = []   
+        self.processing_frame = 0 
+        self.error_frame = 0    
         
-        self.alpha_idle = 0.2
+        self.alpha_idle = 0.8
         self.alpha_active = 0.9
         
         # カラー定義
-        self.color_idle = "#00FF00"    # 待機中（緑）
-        self.color_recording = "#00FFFF" # 録音中（シアン）
-        self.color_process_start = (255, 165, 0) # オレンジ
-        self.color_process_end = (255, 0, 0)     # 赤
-        self.color_error = "#800080" # エラー（紫）
+        self.color_idle = "#00FF00"    
+        self.color_recording = "#00FFFF" 
+        self.color_process_start = (255, 165, 0) 
+        self.color_process_end = (255, 0, 0)     
+        self.color_error = "#800080" 
         self.color_grid = "#003333"
         
-        # アプリ終了コールバック
         self.on_quit_callback = None
         
-        # 初期描画
-        self.root.attributes("-alpha", self.alpha_idle)
+        # 初期描画 (Visual Layerの透過度設定)
+        self.visual_window.attributes("-alpha", self.alpha_idle)
         self.update_wave()
+        
+        # 2つのウィンドウを同期させ続けるためのループ
+        self.sync_windows()
+        
+        # 起動時に設定ウィンドウを最小化状態で開く
+        self.root.after(500, self.open_settings_minimized)
 
-    def set_callback(self, callback):
-        self.on_quit_callback = callback
+    def open_settings_minimized(self):
+        self.open_settings()
+        if hasattr(self, "settings_window") and self.settings_window:
+            self.settings_window.iconify()
+
+    def sync_windows(self):
+        """Visual WindowをClick Windowに追従させる（念のため）"""
+        try:
+            self.visual_window.lift()
+            self.root.after(100, self.sync_windows)
+        except:
+            pass
 
     def set_callback(self, callback):
         self.on_quit_callback = callback
@@ -167,90 +577,45 @@ class RecordingIndicator:
         self.drag_data["moved"] = False
 
     def do_move(self, event):
-        """ドラッグ中"""
+        """ドラッグ中 - 両方のウィンドウを移動"""
         dx = event.x - self.drag_data["x"]
         dy = event.y - self.drag_data["y"]
         
-        # 少しでも動いたらドラッグとみなす
         if abs(dx) > 2 or abs(dy) > 2:
             self.drag_data["moved"] = True
             
+        # イベント発生元がどちらでも、基準は self.root の位置
         x = self.root.winfo_x() + dx
         y = self.root.winfo_y() + dy
-        self.root.geometry(f"+{x}+{y}")
+        
+        geom = f"+{x}+{y}"
+        self.root.geometry(geom)
+        self.visual_window.geometry(geom)
 
     def stop_move(self, event):
-        """ドラッグ終了（クリック判定含む）"""
+        """ドラッグ終了"""
         if not self.drag_data["moved"]:
-            # 移動していなければクリック処理へ
             self.on_click(event)
         self.drag_data["moved"] = False
 
-    def show_menu(self, event):
-        """右クリックでメニューを表示"""
-        self.menu_visible = True
-        self.root.attributes("-alpha", self.alpha_active)
-        
-        # 既存のタイマーがあればキャンセル
-        if hasattr(self, "_hide_timer") and self._hide_timer:
-            self.root.after_cancel(self._hide_timer)
-            
-        # 3秒後に自動で隠す
-        self._hide_timer = self.root.after(3000, self.hide_menu)
-
-    def hide_menu(self):
-        """メニューを隠す"""
-        if self.menu_visible:
-            self.menu_visible = False
-            self._update_alpha()
+    def open_settings_handler(self, event):
+        self.open_settings()
 
     def open_settings(self):
-        """設定ウィンドウを開く"""
-        SettingsWindow(self.root)
+        if hasattr(self, "settings_window") and self.settings_window and self.settings_window.winfo_exists():
+            self.settings_window.lift()
+            self.settings_window.focus_force()
+            return
+
+        sw = SettingsWindow(self.root, on_quit_callback=self.on_quit_callback)
+        self.settings_window = sw.window
 
     def on_click(self, event):
-        """クリック判定（メニューなど）"""
-        if self.menu_visible:
-            # メニューエリア判定
-            menu_w, menu_h = 100, 65
-            cx, cy = self.width // 2, self.height // 2
-            
-            # SETTINGSボタン (上)
-            btn_h = 28
-            spacing = 5
-            top_y = cy - menu_h // 2
-            
-            # SETTINGS判定
-            sx1, sx2 = cx - menu_w // 2, cx + menu_w // 2
-            sy1, sy2 = top_y, top_y + btn_h
-            if sx1 <= event.x <= sx2 and sy1 <= event.y <= sy2:
-                self.open_settings()
-                self.hide_menu()
-                return
-
-            # SHUTDOWN判定
-            btm_y = top_y + btn_h + spacing
-            bx1, bx2 = sx1, sx2
-            by1, by2 = btm_y, btm_y + btn_h
-            if bx1 <= event.x <= bx2 and by1 <= event.y <= by2:
-                if self.on_quit_callback:
-                    self.on_quit_callback()
-                return
-            
-            # メニュー外クリック -> 閉じる
-            self.hide_menu()
+        pass
 
     def draw_grid(self):
-        """背景の医療用グリッドを描画"""
-        # 25pxごとにメイングリッド、5pxごとにサブグリッド
-        for x in range(0, self.width, 5):
-            width = 1 if x % 25 == 0 else 0.5
-            color = self.color_grid if x % 25 == 0 else "#001a1a"
-            self.canvas.create_line(x, 0, x, self.height, fill=color, width=width)
-        for y in range(0, self.height, 5):
-            width = 1 if y % 25 == 0 else 0.5
-            color = self.color_grid if y % 25 == 0 else "#001a1a"
-            self.canvas.create_line(0, y, self.width, y, fill=color, width=width)
+        # グリッドは廃止（透明感重視）
+        pass
 
     def set_recording(self, recording):
         self.is_recording = recording
@@ -261,29 +626,25 @@ class RecordingIndicator:
         self._update_alpha()
         
     def show_error(self):
-        """エラー状態を一時的に表示"""
         self.is_error = True
-        self.error_frame = 40 # 2秒間 (20fps * 2)
+        self.error_frame = 40 
         self._update_alpha()
         
     def set_volume(self, rms):
-        """音量(RMS)を設定し、0.0-1.0の範囲に正規化して保持"""
-        # RMSは静かな部屋で10-100、話し声で300-2000くらい変動する
-        # ここでは対数的に扱って感度を調整
-        if rms < 300: # 無音閾値を上げてノイズでの誤反応を防ぐ
+        if rms < 300: 
             vol = 0
         else:
             vol = min((rms - 300) / 2000, 1.0)
         self.current_volume = vol
 
     def _update_alpha(self):
-        if self.is_recording or self.is_processing or self.menu_visible or self.is_error:
-            self.root.attributes("-alpha", self.alpha_active)
+        # 変更対象は visual_window のみ (rootは常に0.01)
+        if self.is_recording or self.is_processing or self.is_error:
+            self.visual_window.attributes("-alpha", self.alpha_active)
         else:
-            self.root.attributes("-alpha", self.alpha_idle)
+            self.visual_window.attributes("-alpha", self.alpha_idle)
 
     def interpolate_color(self, start_rgb, end_rgb, progress):
-        """2色間を補間して#RRGGBB文字列を返す"""
         r = int(start_rgb[0] + (end_rgb[0] - start_rgb[0]) * progress)
         g = int(start_rgb[1] + (end_rgb[1] - start_rgb[1]) * progress)
         b = int(start_rgb[2] + (end_rgb[2] - start_rgb[2]) * progress)
@@ -293,12 +654,7 @@ class RecordingIndicator:
         """アニメーション描画"""
         self.canvas.delete("all")
         
-        # === クリックシールド (Click Shield) ===
-        # 背景全体に「見えないがクリック判定を持つ」矩形を置く。
-        # stipple="gray50" で50%の密度で描画（透明ではない扱いになる）。
-        # 色は #010101 (ほぼ黒) だが、透過キー bg="black" とは違う色にする。
-        self.canvas.create_rectangle(0, 0, self.width, self.height, 
-                                     fill="#010101", outline="", stipple="gray50")
+        # Click Shield は不要になったので削除 (rootウィンドウがその役割)
         
         # 波形データの生成
         if not self.points:
@@ -399,43 +755,7 @@ class RecordingIndicator:
             lx, ly = coords[-2], coords[-1]
             self.canvas.create_oval(lx-1, ly-1, lx+1, ly+1, fill="white", outline=main_color)
 
-        # --- メニュー描画 ---
-        if self.menu_visible:
-            menu_w, menu_h = 100, 65 # 描画サイズ
-            btn_h = 28
-            spacing = 5
-            
-            cx, cy = self.width // 2, self.height // 2
-            # 全体の背景（少し暗く）
-            self.canvas.create_rectangle(cx - menu_w//2 - 5, cy - menu_h//2 - 5,
-                                         cx + menu_w//2 + 5, cy + menu_h//2 + 5,
-                                         fill="black", stipple="gray75", outline="")
 
-            # Helper for button drawing
-            def draw_btn(text, by, color):
-                bx1 = cx - menu_w // 2
-                bx2 = cx + menu_w // 2
-                by1 = by
-                by2 = by + btn_h
-                
-                # 枠
-                self.canvas.create_rectangle(bx1, by1, bx2, by2, fill="black", outline=color, width=2)
-                # 角飾り
-                d = 5
-                self.canvas.create_line(bx1, by1, bx1+d, by1, fill="white", width=2)
-                self.canvas.create_line(bx1, by1, bx1, by1+d, fill="white", width=2)
-                self.canvas.create_line(bx2-d, by2, bx2, by2, fill="white", width=2)
-                self.canvas.create_line(bx2, by2-d, bx2, by2, fill="white", width=2)
-                
-                self.canvas.create_text(cx, (by1+by2)//2, text=text, fill=color, font=("Arial", 8, "bold"))
-
-            # SETTINGS (Cyan)
-            top_y = cy - menu_h // 2
-            draw_btn("SETTINGS", top_y, "#00FFFF")
-            
-            # SHUTDOWN (Red)
-            btm_y = top_y + btn_h + spacing
-            draw_btn("SHUTDOWN", btm_y, "#FF4444")
 
         # 50ms (20fps) 更新
         self.root.after(50, self.update_wave)
@@ -475,11 +795,33 @@ class VoiceInputApp:
     def process_with_gemini_audio(self, audio_bytes):
         """音声データを直接Geminiに送信して、聞き取りと成形を同時に行う"""
         try:
-            # プロンプトを音声対応用に調整
-            prompt = (
-                f"{SYSTEM_PROMPT}\n\n"
-                "添付された音声を聞き取り、指示通りに成形したテキストのみを答えてください。"
-            )
+            # Load settings for dynamic prompt
+            settings_path = resource_path("settings.json")
+            custom_instruction = ""
+            if os.path.exists(settings_path):
+                try:
+                    with open(settings_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        # New Persona logic
+                        if "personas" in data:
+                            idx = data.get("active_index", 0)
+                            if 0 <= idx < len(data["personas"]):
+                                custom_instruction = data["personas"][idx].get("instruction", "")
+                        else:
+                            # Fallback to old format
+                            custom_instruction = data.get("custom_instruction", "")
+                except:
+                    pass
+
+            # Build prompt with settings
+            prompt = SYSTEM_PROMPT
+            
+            # Append custom instruction
+            if custom_instruction:
+                prompt += f"\n\n【追加指示（重要）】\n{custom_instruction}"
+
+            prompt += "\n\n添付された音声を聞き取り、指示通りに成形したテキストのみを答えてください。"
+
             response = model.generate_content([
                 prompt,
                 {"mime_type": "audio/wav", "data": audio_bytes}
@@ -497,16 +839,25 @@ class VoiceInputApp:
             self.indicator.root.after(0, self.indicator.show_error)
             return None
 
+
     def type_text(self, text):
-        """クリップボード経由で貼り付け"""
+        """以前動作していた安定版をベースに、メニュー干渉対策を適用"""
         if not text: return
         try:
+            # 1. クリップボードにコピーして安定を待つ
             pyperclip.copy(text)
-            time.sleep(0.1)
-            if platform.system() == "Darwin":
-                pyautogui.hotkey("command", "v")
-            else:
-                pyautogui.hotkey("ctrl", "v")
+            time.sleep(0.1) 
+            
+            # 2. Windowsのメニューバー干渉（Altキー残滓）を強制解除するハック
+            # Ctrlを単押しすることで、Altでアクティブになったメニューモードを終了させ、
+            # フォーカスを入力欄に確実に取り戻します。
+            pyautogui.press('ctrl')
+            time.sleep(0.05)
+            
+            # 3. 貼り付け実行 (最も互換性の高い方法)
+            pyautogui.hotkey('ctrl', 'v')
+            
+            print(f" -> ペースト完了: {len(text)} 文字")
         except Exception as e:
             print(f"[貼り付けエラー]: {e}")
 
@@ -525,37 +876,38 @@ class VoiceInputApp:
         print("--- 録音待機中 ---")
         while self.running:
             try:
-                # 右Altの検知 (キーコード165)
-                is_pressed = keyboard.is_pressed(self.recording_key) or keyboard.is_pressed(165)
+                # 右Alt (キーコード165) を優先検知
+                is_pressed = keyboard.is_pressed(165) or keyboard.is_pressed(self.recording_key)
 
                 if is_pressed and not self.is_recording:
                     self.is_recording = True
-                    # インジケータを更新
                     self.indicator.set_recording(True)
 
+                    # Altキー押下イベントを遮断 (メニュー起動を最小限にする)
+                    try: keyboard.block_key(165)
+                    except: pass
                     
-                    frames = []
-                    stream = p.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK)
-                    
-                    while (keyboard.is_pressed(self.recording_key) or keyboard.is_pressed(165)) and self.running:
-                        data = stream.read(CHUNK, exception_on_overflow=False)
-                        frames.append(data)
+                    try:
+                        frames = []
+                        stream = p.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK)
                         
-                        # リアルタイム波形更新
-                        try:
+                        while (keyboard.is_pressed(165) or keyboard.is_pressed(self.recording_key)) and self.running:
+                            data = stream.read(CHUNK, exception_on_overflow=False)
+                            frames.append(data)
                             rms = audioop.rms(data, 2)
                             self.indicator.set_volume(rms)
-                        except:
-                            pass
-                    
-                    # 末尾の切れを防ぐため、キーを離した直後の音をわずかに（約0.3秒）追加録音
-                    for _ in range(5):
-                        data = stream.read(CHUNK, exception_on_overflow=False)
-                        frames.append(data)
-                    
-                    stream.stop_stream()
-                    stream.close()
-                    self.indicator.set_recording(False)
+                        
+                        # 末尾の切れ防止 (0.15秒)
+                        for _ in range(3):
+                            frames.append(stream.read(CHUNK, exception_on_overflow=False))
+                        
+                        stream.stop_stream()
+                        stream.close()
+                    finally:
+                        self.indicator.set_recording(False)
+                        # 必ずブロックを解除
+                        try: keyboard.unblock_key(165)
+                        except: pass
 
 
 
