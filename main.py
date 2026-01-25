@@ -95,7 +95,9 @@ class RecordingIndicator:
         
         # キャンバスイベント
         self.canvas.bind("<Button-3>", self.show_shutdown_button) # 右クリック
-        self.canvas.bind("<Button-1>", self.on_click)             # 左クリック
+        self.canvas.bind("<Button-1>", self.start_move)           # 左クリック（ドラッグ開始）
+        self.canvas.bind("<B1-Motion>", self.do_move)             # ドラッグ移動
+        self.canvas.bind("<ButtonRelease-1>", self.stop_move)     # ドラッグ終了（＆クリック判定）
         
         self.width = width
         self.height = height
@@ -104,12 +106,15 @@ class RecordingIndicator:
         # 状態フラグ
         self.is_recording = False
         self.is_processing = False
+        self.is_error = False # エラー状態
         self.shutdown_visible = False
+        self.drag_data = {"x": 0, "y": 0, "moved": False} # ドラッグ用データ
         
         # アニメーション用変数
         self.current_volume = 0 # 音量 (0.0 - 1.0相当)
         self.pqrst_queue = []   # 心拍波形キュー
         self.processing_frame = 0 # 処理中アニメーション用フレーム
+        self.error_frame = 0    # エラー表示フレームカウンター
         
         self.alpha_idle = 0.2
         self.alpha_active = 0.9
@@ -119,6 +124,7 @@ class RecordingIndicator:
         self.color_recording = "#00FFFF" # 録音中（シアン）
         self.color_process_start = (255, 165, 0) # オレンジ
         self.color_process_end = (255, 0, 0)     # 赤
+        self.color_error = "#800080" # エラー（紫）
         self.color_grid = "#003333"
         
         # アプリ終了コールバック
@@ -133,6 +139,32 @@ class RecordingIndicator:
 
     def set_callback(self, callback):
         self.on_quit_callback = callback
+
+    def start_move(self, event):
+        """ドラッグ開始"""
+        self.drag_data["x"] = event.x
+        self.drag_data["y"] = event.y
+        self.drag_data["moved"] = False
+
+    def do_move(self, event):
+        """ドラッグ中"""
+        dx = event.x - self.drag_data["x"]
+        dy = event.y - self.drag_data["y"]
+        
+        # 少しでも動いたらドラッグとみなす
+        if abs(dx) > 2 or abs(dy) > 2:
+            self.drag_data["moved"] = True
+            
+        x = self.root.winfo_x() + dx
+        y = self.root.winfo_y() + dy
+        self.root.geometry(f"+{x}+{y}")
+
+    def stop_move(self, event):
+        """ドラッグ終了（クリック判定含む）"""
+        if not self.drag_data["moved"]:
+            # 移動していなければクリック処理へ
+            self.on_click(event)
+        self.drag_data["moved"] = False
 
     def show_shutdown_button(self, event):
         """右クリックでSHUTDOWNボタンを表示"""
@@ -195,6 +227,12 @@ class RecordingIndicator:
         self.is_processing = processing
         self._update_alpha()
         
+    def show_error(self):
+        """エラー状態を一時的に表示"""
+        self.is_error = True
+        self.error_frame = 40 # 2秒間 (20fps * 2)
+        self._update_alpha()
+        
     def set_volume(self, rms):
         """音量(RMS)を設定し、0.0-1.0の範囲に正規化して保持"""
         # RMSは静かな部屋で10-100、話し声で300-2000くらい変動する
@@ -206,7 +244,7 @@ class RecordingIndicator:
         self.current_volume = vol
 
     def _update_alpha(self):
-        if self.is_recording or self.is_processing or self.shutdown_visible:
+        if self.is_recording or self.is_processing or self.shutdown_visible or self.is_error:
             self.root.attributes("-alpha", self.alpha_active)
         else:
             self.root.attributes("-alpha", self.alpha_idle)
@@ -245,19 +283,32 @@ class RecordingIndicator:
         if self.is_processing:
             # === 処理中: グリッチ＆カラーシフト ===
             self.processing_frame += 1
-            progress = (self.processing_frame % 20) / 20.0 # 20フレームで色が一周...せず赤へ向かう
+            progress = (self.processing_frame % 20) / 20.0 
             
-            # 色：オレンジ -> 赤 へランダムに揺らぎながら変化
-            # 完全に赤になりきらず、行ったり来たりさせる演出
-            swing_progress = (math.sin(self.processing_frame * 0.2) + 1) / 2 # 0.0-1.0
+            swing_progress = (math.sin(self.processing_frame * 0.2) + 1) / 2 
             main_color = self.interpolate_color(self.color_process_start, self.color_process_end, swing_progress)
             glow_color = self.interpolate_color((100,50,0), (100,0,0), swing_progress)
 
-            # 形状：グリッチノイズ
-            # 音量に関係なく激しく乱れる
             noise = random.randint(-15, 15)
             self.points.append(base_y + noise)
             
+        elif self.is_error:
+            # === エラー: 紫色のスパイク ===
+            self.error_frame -= 1
+            if self.error_frame <= 0:
+                self.is_error = False
+                self._update_alpha()
+            
+            main_color = self.color_error
+            glow_color = "#4b0082" # Indigo
+            
+            # ランダムで鋭いスパイク
+            if random.random() > 0.7:
+                 val = random.randint(-20, 20)
+            else:
+                 val = random.randint(-2, 2)
+            self.points.append(base_y + val)
+
         elif self.is_recording:
             # === 録音中: 音量連動 ===
             main_color = self.color_recording
@@ -304,7 +355,7 @@ class RecordingIndicator:
             coords.append(i * 4)
             coords.append(y)
             
-        if self.is_processing or self.is_recording:
+        if self.is_processing or self.is_recording or self.is_error:
              # グロー効果あり
              self.canvas.create_line(coords, fill=glow_color, width=4, smooth=True)
         
@@ -381,13 +432,15 @@ class VoiceInputApp:
             ])
             text = response.text.strip()
             
-            # クライアント側フォールバック: 「改行」という文字そのものが返ってきたら改行コードにする
+            # クライアント側フォールバック
             if text in ["改行", "かいぎょう"]:
                 return "\n"
                 
             return text
         except Exception as e:
             print(f"[Gemini直接処理失敗]: {e}")
+            # エラー視覚化 (メインスレッドで実行)
+            self.indicator.root.after(0, self.indicator.show_error)
             return None
 
     def type_text(self, text):
