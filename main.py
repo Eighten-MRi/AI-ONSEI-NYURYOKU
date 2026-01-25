@@ -99,21 +99,21 @@ class RecordingIndicator:
         self.height = height
         self.points = []
         self.is_recording = False
-        self.alpha_idle = 0.2
-        self.alpha_active = 0.9
-        
-        self.is_recording = False
+        self.is_processing = False
+        self.pqrst_queue = []
         self.alpha_idle = 0.2
         self.alpha_active = 0.9
         
         # ネオンカラー定義
         self.color_cyan = "#00FFFF"   # ネオンシアン
+        self.color_orange = "#FFA500" # ネオンオレンジ (処理中)
         self.color_glow = "#008080"    # グロー用
         self.color_grid = "#003333"    # グリッド用（暗い）
         
         # 初期描画
         self.root.attributes("-alpha", self.alpha_idle)
         self.update_wave()
+
 
     def setup_context_menu(self, on_quit_callback):
         """右クリックメニューの設定"""
@@ -139,10 +139,18 @@ class RecordingIndicator:
 
     def set_recording(self, recording):
         self.is_recording = recording
-        if recording:
+        if recording or self.is_processing:
             self.root.attributes("-alpha", self.alpha_active)
         else:
             self.root.attributes("-alpha", self.alpha_idle)
+
+    def set_processing(self, processing):
+        self.is_processing = processing
+        if processing or self.is_recording:
+            self.root.attributes("-alpha", self.alpha_active)
+        else:
+            self.root.attributes("-alpha", self.alpha_idle)
+
 
     def update_wave(self):
         """ガチ医療モニタ風の心電図アニメーション"""
@@ -166,6 +174,43 @@ class RecordingIndicator:
             main_color = self.color_cyan
             glow_color = self.color_glow
             main_width = 2.0
+
+        elif self.is_processing:
+            # 処理中はPQRST波形 (心電図) をオレンジで表示
+            if not self.pqrst_queue:
+                # PQRST波形の生成 (標準的な鼓動パターン)
+                # フラット -> P -> フラット -> Q -> R -> S -> フラット -> T -> フラット
+                base = self.height // 2
+                # スケール調整
+                h_scale = 0.5 
+                
+                # シーケンス定義 (相対Y座標)
+                sequence = [0]*10 + \
+                           [3]*2 + [0]*2 + \
+                           [-2] + [25] + [-8] + [0]*2 + \
+                           [5]*3 + [0]*15
+                           
+                for y_offset in sequence:
+                   # Y座標は上に行くほど小さいので、マイナスする
+                   self.points.append(base - int(y_offset * h_scale))
+                   # キューにダミーを入れて制御してもいいが、ここではpointsに直接追加せず
+                   # 毎回1つずつpointsに追加するロジックにするため、pqrst_queueを使う
+                   
+                self.pqrst_queue = sequence
+            
+            # キューから次の値を取り出して追加
+            base = self.height // 2
+            next_val = self.pqrst_queue.pop(0)
+            # ノイズを少し乗せる
+            self.points.append(base - int(next_val) + random.randint(-1, 1))
+            
+            # キューが空になったら少し待機（フラット）期間を入れるためにNoneなどを入れる手もあるが
+            # 上記 sequence にフラット期間を含めているのでループするだけでOK
+            
+            main_color = self.color_orange
+            glow_color = "#804000" # オレンジのグロー
+            main_width = 2.0
+
         else:
             # 待機中は水平
             self.points.append(self.height // 2)
@@ -179,17 +224,18 @@ class RecordingIndicator:
             coords.append(i * 4)
             coords.append(y)
             
-        if self.is_recording:
+        if self.is_recording or self.is_processing:
             self.canvas.create_line(coords, fill=glow_color, width=4, smooth=True)
             self.canvas.create_line(coords, fill=main_color, width=main_width, smooth=True)
             self.canvas.create_line(coords, fill="white", width=0.5, smooth=True)
             
-            # 3. 先端のリード点（発光ドット）- ユーザー要望によりさらに縮小
+            # リード点
             last_x, last_y = coords[-2], coords[-1]
             self.canvas.create_oval(last_x-1.5, last_y-1.5, last_x+1.5, last_y+1.5, fill="white", outline=main_color, width=1)
             self.canvas.create_oval(last_x-3, last_y-3, last_x+3, last_y+3, outline=glow_color, width=1)
         else:
             self.canvas.create_line(coords, fill=main_color, width=main_width, smooth=True)
+
 
         # 50ms ごとに更新
         self.root.after(50, self.update_wave)
@@ -293,8 +339,8 @@ class VoiceInputApp:
                     
                     stream.stop_stream()
                     stream.close()
-                    stream.close()
                     self.indicator.set_recording(False)
+
 
 
                     if frames:
@@ -322,8 +368,8 @@ class VoiceInputApp:
             except Exception as e:
                 print(f"[録音エラー]: {e}")
                 self.is_recording = False
-                self.is_recording = False
                 self.indicator.set_recording(False)
+
 
                 time.sleep(1)
 
@@ -337,6 +383,7 @@ class VoiceInputApp:
                 audio_bytes = self.audio_queue.get()
                 
                 try:
+                    self.indicator.set_processing(True) # 処理中開始
                     if self.use_ai:
                         # AIがONなら直接Geminiで処理（爆速）
                         print("[Geminiで直接処理中...]", end="", flush=True)
@@ -357,7 +404,8 @@ class VoiceInputApp:
                 except Exception as e:
                     print(f" -> [!] 処理失敗: {e}")
                 finally:
-                    self.indicator.set_recording(False)
+                    self.indicator.set_processing(False) # 処理中終了
+
 
             
             time.sleep(0.1)
