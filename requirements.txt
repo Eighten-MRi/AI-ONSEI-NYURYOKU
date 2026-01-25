@@ -5,5 +5,3 @@ google-generativeai
 pyperclip
 pyautogui
 python-dotenv
-pystray
-Pillow
