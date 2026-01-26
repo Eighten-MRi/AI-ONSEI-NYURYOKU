@@ -151,6 +151,9 @@ class SettingsWindow:
             self.current_index = 0
             
         self.var_name = tk.StringVar()
+        self.var_sense_val = tk.IntVar()
+        self.var_sense_val.set(self.settings.get("energy_threshold", 300))
+        self.current_tab = "persona" # persona, audio, appearance
 
         # === Layout ===
         # Main Container with Border
@@ -169,109 +172,176 @@ class SettingsWindow:
         self.main_frame.config(bg=self.colors["bg"], highlightbackground=self.colors["border"])
         self.window.config(bg=self.colors["bg"])
 
-        # Split Layout
-        # Top Header
-        header_frame = tk.Frame(self.main_frame, bg=self.colors["bg"])
-        header_frame.pack(fill=tk.X, padx=10, pady=10)
-        tk.Label(header_frame, text=f"設定 / ペルソナ管理 [{self.current_theme_name}]", 
-                 font=self.font_header, bg=self.colors["bg"], fg=self.colors["fg_header"]).pack(side=tk.LEFT)
-        
-        # Save Indicator (Top Right)
-        self.lbl_save_status = tk.Label(header_frame, text="", font=self.font_small, bg=self.colors["bg"], fg=self.colors["fg_primary"])
-        self.lbl_save_status.pack(side=tk.RIGHT)
+        # --- Tab Header ---
+        tab_frame = tk.Frame(self.main_frame, bg=self.colors["bg"])
+        tab_frame.pack(fill=tk.X, padx=10, pady=(10, 0))
+
+        tabs = [
+            ("👤 ペルソナ", "persona"),
+            ("🎤 音声設定", "audio"),
+            ("🎨 外観・終了", "appearance")
+        ]
+
+        for text, tab_id in tabs:
+            is_active = (self.current_tab == tab_id)
+            btn = self.create_flat_btn(tab_frame, text, lambda tid=tab_id: self.switch_tab(tid), 
+                                      style="primary" if is_active else "secondary")
+            btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
 
         # Content Area
-        content_frame = tk.Frame(self.main_frame, bg=self.colors["bg"])
-        content_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=5) # More side padding
+        self.content_container = tk.Frame(self.main_frame, bg=self.colors["bg"])
+        self.content_container.pack(fill=tk.BOTH, expand=True, padx=15, pady=10)
+
+        if self.current_tab == "persona":
+            self.draw_persona_tab()
+        elif self.current_tab == "audio":
+            self.draw_audio_tab()
+        elif self.current_tab == "appearance":
+            self.draw_appearance_tab()
+            
+        # --- Footer (Save Status Only) ---
+        footer_frame = tk.Frame(self.main_frame, bg=self.colors["bg"])
+        footer_frame.pack(fill=tk.X, padx=15, pady=(0, 10))
+        
+        self.lbl_save_status = tk.Label(footer_frame, text="", font=self.font_small, 
+                                        bg=self.colors["bg"], fg=self.colors["fg_primary"])
+        self.lbl_save_status.pack(side=tk.RIGHT)
+
+        # Close button always visible in bottom right or somewhere? 
+        # Let's keep a small close button at the bottom
+        self.create_flat_btn(footer_frame, "設定を閉じる", self.window.destroy, style="primary").pack(side=tk.LEFT)
+
+    def switch_tab(self, tab_id):
+        self.current_tab = tab_id
+        self.rebuild_ui()
+
+    def draw_persona_tab(self):
+        # Content Area split for persona
+        content_frame = tk.Frame(self.content_container, bg=self.colors["bg"])
+        content_frame.pack(fill=tk.BOTH, expand=True)
         
         # --- Left Panel (List) ---
         frame_left = tk.Frame(content_frame, bg=self.colors["bg"], width=240)
-        frame_left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10)) # Expanding left panel properly
+        frame_left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
         
         tk.Label(frame_left, text="ペルソナ一覧", font=self.font_bold, 
                  bg=self.colors["bg"], fg=self.colors["fg_header"]).pack(anchor=tk.W, pady=(0,10))
         
-        # List Container
         list_container = tk.Frame(frame_left, bg=self.colors["border"], padx=1, pady=1)
-        list_container.pack(fill=tk.BOTH, expand=True) # Full height
+        list_container.pack(fill=tk.BOTH, expand=True)
         
         self.listbox = tk.Listbox(list_container, exportselection=False, 
                                   bg=self.colors["input_bg"], fg=self.colors["input_fg"],
                                   selectbackground=self.colors["select_bg"], selectforeground=self.colors["select_fg"],
                                   highlightthickness=0, borderwidth=0, font=self.font_main)
-        self.listbox.pack(fill=tk.BOTH, expand=True, padx=5, pady=5) # Internal padding
-        
+        self.listbox.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         self.listbox.bind("<<ListboxSelect>>", self.on_select)
         
-        # List Buttons (Hierarchy: Secondary, Danger)
         frame_list_btns = tk.Frame(frame_left, bg=self.colors["bg"])
         frame_list_btns.pack(fill=tk.X, pady=15)
-        
         self.create_flat_btn(frame_list_btns, "新規作成", self.add_persona, style="secondary").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
         self.create_flat_btn(frame_list_btns, "削除", self.delete_persona, style="danger").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 0))
 
         # --- Right Panel (Details) ---
         frame_right = tk.Frame(content_frame, bg=self.colors["bg"])
-        frame_right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True) # Expanding right panel properly
+        frame_right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
-        # Name Edit
         frame_name = tk.Frame(frame_right, bg=self.colors["bg"])
         frame_name.pack(fill=tk.X, pady=(0, 15))
         tk.Label(frame_name, text="識別名 (ID):", font=self.font_bold, bg=self.colors["bg"], fg=self.colors["fg_header"]).pack(side=tk.LEFT, padx=(0,10))
-        
         self.entry_name = RoundedEntry(frame_name, textvariable=self.var_name, 
                                    bg=self.colors["input_bg"], fg=self.colors["input_fg"], 
-                                   insertbackground=self.colors["fg_primary"],
-                                   font=self.font_main,
-                                   radius=8, height=36)
-        self.entry_name.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5) # Internal padding (ipady) handled by widget height
+                                   insertbackground=self.colors["fg_primary"], font=self.font_main, radius=8, height=36)
+        self.entry_name.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
         self.entry_name.bind_entry("<FocusOut>", self.on_name_change) 
         
-        # Instruction Edit
-        tk.Label(frame_right, text="AI指示プロンプト:", font=self.font_bold, bg=self.colors["bg"], fg=self.colors["fg_header"]).pack(anchor=tk.W, pady=(0, 5))
-        
+        tk.Label(frame_right, text="AI指示プロンプト (書き起こし調整):", font=self.font_bold, bg=self.colors["bg"], fg=self.colors["fg_header"]).pack(anchor=tk.W, pady=(0, 5))
         text_container = tk.Frame(frame_right, bg=self.colors["border"], padx=1, pady=1)
         text_container.pack(fill=tk.BOTH, expand=True)
-        
-        self.text_instruction = tk.Text(text_container, height=1, width=40, # Height is relative, will expand
-                                        bg=self.colors["input_bg"], fg=self.colors["input_fg"], 
-                                        insertbackground=self.colors["fg_primary"],
-                                        highlightthickness=0, borderwidth=0, font=self.font_main,
-                                        padx=10, pady=10) # Internal padding
+        self.text_instruction = tk.Text(text_container, height=1, width=40, bg=self.colors["input_bg"], fg=self.colors["input_fg"], 
+                                        insertbackground=self.colors["fg_primary"], highlightthickness=0, borderwidth=0, font=self.font_main, padx=10, pady=10)
         self.text_instruction.pack(fill=tk.BOTH, expand=True)
         self.text_instruction.bind("<KeyRelease>", self.on_text_change)
-        
-        
-        # === Footer ===
-        frame_footer = tk.Frame(self.main_frame, bg=self.colors["bg"])
-        frame_footer.pack(fill=tk.X, padx=15, pady=15)
 
-        # Left Side (Theme, Active)
-        footer_left = tk.Frame(frame_footer, bg=self.colors["bg"])
-        footer_left.pack(side=tk.LEFT)
-
-        # Theme Cycle Button (Secondary)
-        self.create_flat_btn(footer_left, "🎨 テーマ切替", self.cycle_theme, style="secondary").pack(side=tk.LEFT, padx=(0, 15))
-
-        # Active Status + Button
-        self.lbl_active_status = tk.Label(footer_left, text="", font=self.font_bold, bg=self.colors["bg"])
+        # Footer Actions for Persona
+        frame_persona_actions = tk.Frame(frame_right, bg=self.colors["bg"])
+        frame_persona_actions.pack(fill=tk.X, pady=(15, 0))
+        self.lbl_active_status = tk.Label(frame_persona_actions, text="", font=self.font_bold, bg=self.colors["bg"])
         self.lbl_active_status.pack(side=tk.LEFT, padx=(0, 10))
-        
-        self.btn_activate = self.create_flat_btn(footer_left, "有効化", self.set_active_persona, style="primary") # Primary
-        self.btn_activate.pack(side=tk.LEFT)
+        self.btn_activate = self.create_flat_btn(frame_persona_actions, "有効化", self.set_active_persona, style="primary")
+        self.btn_activate.pack(side=tk.RIGHT)
 
-        # Right Side (Close, Quit)
-        footer_right = tk.Frame(frame_footer, bg=self.colors["bg"])
-        footer_right.pack(side=tk.RIGHT)
-
-        self.create_flat_btn(footer_right, "閉じる", self.window.destroy, style="primary").pack(side=tk.LEFT, padx=5)
-        self.create_flat_btn(footer_right, "アプリ終了", self.on_shutdown, style="danger").pack(side=tk.LEFT, padx=5)
-        
-        # Initialize
+        # Init persona tab state
         self.refresh_list()
         self.listbox.selection_set(self.current_index)
         self.load_details(self.current_index)
         self.update_active_display()
+
+    def draw_audio_tab(self):
+        container = tk.Frame(self.content_container, bg=self.colors["bg"])
+        container.pack(fill=tk.BOTH, expand=True, pady=20)
+
+        tk.Label(container, text="🎤 マイク録音感度の設定", font=self.font_header, 
+                 bg=self.colors["bg"], fg=self.colors["fg_header"]).pack(pady=(0, 20))
+
+        # Description
+        desc = "Altキーを押したとき、どの程度の音量があれば「喋っている」と判断するかを調整します。"
+        tk.Label(container, text=desc, font=self.font_main, bg=self.colors["bg"], fg=self.colors["fg_primary"], wraplength=600).pack(pady=5)
+
+        # Slider Value Display
+        val_frame = tk.Frame(container, bg=self.colors["bg"])
+        val_frame.pack(pady=10)
+        tk.Label(val_frame, text="現在のしきい値:", font=self.font_main, bg=self.colors["bg"], fg=self.colors["fg_primary"]).pack(side=tk.LEFT)
+        self.lbl_sense_val = tk.Label(val_frame, textvariable=self.var_sense_val, font=(self.colors["font"], 16, "bold"), 
+                                      bg=self.colors["bg"], fg=self.colors["active_bg"])
+        self.lbl_sense_val.pack(side=tk.LEFT, padx=10)
+
+        # Slider Frame with Guides
+        slider_outer = tk.Frame(container, bg=self.colors["bg"])
+        slider_outer.pack(fill=tk.X, padx=50, pady=20)
+
+        # Labels for Slider
+        guide_frame = tk.Frame(slider_outer, bg=self.colors["bg"])
+        guide_frame.pack(fill=tk.X)
+        tk.Label(guide_frame, text="← 高感度 (ボソボソ声用)", font=self.font_small, bg=self.colors["bg"], fg=self.colors["fg_header"]).pack(side=tk.LEFT)
+        tk.Label(guide_frame, text="雑音に強い (騒がしい場所) →", font=self.font_small, bg=self.colors["bg"], fg=self.colors["fg_danger"]).pack(side=tk.RIGHT)
+
+        self.scale_sense = tk.Scale(slider_outer, from_=10, to=1000, orient=tk.HORIZONTAL, 
+                                    showvalue=False, bg=self.colors["bg"], highlightthickness=0,
+                                    troughcolor=self.colors["input_bg"], activebackground=self.colors["active_bg"],
+                                    command=lambda e: self.on_sense_change())
+        self.scale_sense.set(self.settings.get("energy_threshold", 300))
+        self.scale_sense.pack(fill=tk.X, pady=5)
+
+        # Help Info
+        help_box = tk.Frame(container, bg=self.colors["input_bg"], padx=15, pady=15)
+        help_box.pack(fill=tk.X, padx=50, pady=10)
+        help_text = "💡 アドバイス:\n・静かな部屋で使う場合は 30〜80 程度がおすすめです。\n・テレビや外の音がうるさい場合は 200〜400 程度に上げてください。\n・バーを動かして「保存完了」が出れば、次の録音から反映されます。"
+        tk.Label(help_box, text=help_text, font=self.font_small, bg=self.colors["input_bg"], fg=self.colors["input_fg"], justify=tk.LEFT).pack()
+
+    def draw_appearance_tab(self):
+        container = tk.Frame(self.content_container, bg=self.colors["bg"])
+        container.pack(fill=tk.BOTH, expand=True, pady=20)
+
+        tk.Label(container, text="🎨 アプリの外観とシステム", font=self.font_header, 
+                 bg=self.colors["bg"], fg=self.colors["fg_header"]).pack(pady=(0, 20))
+
+        # Theme Section
+        theme_frame = tk.Frame(container, bg=self.colors["input_bg"], padx=20, pady=20)
+        theme_frame.pack(fill=tk.X, padx=100)
+        
+        tk.Label(theme_frame, text=f"現在のテーマ: {self.current_theme_name}", font=self.font_bold, 
+                 bg=self.colors["input_bg"], fg=self.colors["input_fg"]).pack(pady=(0, 15))
+        
+        self.create_flat_btn(theme_frame, "🎨 テーマを切り替える", self.cycle_theme, style="secondary").pack(fill=tk.X)
+
+        # Shutdown Section
+        shutdown_frame = tk.Frame(container, bg=self.colors["bg"], pady=40)
+        shutdown_frame.pack()
+
+        tk.Label(shutdown_frame, text="完全に終了したい場合はこちらを押してください", font=self.font_small, 
+                 bg=self.colors["bg"], fg=self.colors["fg_primary"]).pack(pady=5)
+        self.create_flat_btn(shutdown_frame, "⚠ アプリを完全に終了する", self.on_shutdown, style="danger").pack(padx=20, pady=10)
 
     def cycle_theme(self):
         theme_names = list(THEMES.keys())
@@ -442,6 +512,12 @@ class SettingsWindow:
         self.refresh_list()
         self.listbox.selection_set(self.current_index) 
         self.update_active_display()
+
+    def on_sense_change(self):
+        val = self.scale_sense.get()
+        self.settings["energy_threshold"] = val
+        self.var_sense_val.set(val)
+        self.save_settings()
 
     def update_active_display(self):
         if self.current_index == self.settings["active_index"]:
@@ -634,10 +710,20 @@ class RecordingIndicator:
         self._update_alpha()
         
     def set_volume(self, rms):
-        if rms < 300: 
+        # 設定ファイルから現在のしきい値を取得（インジケータのアニメーション用）
+        threshold = 300
+        settings_path = resource_path("settings.json")
+        if os.path.exists(settings_path):
+            try:
+                with open(settings_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    threshold = data.get("energy_threshold", 300)
+            except: pass
+
+        if rms < threshold: 
             vol = 0
         else:
-            vol = min((rms - 300) / 2000, 1.0)
+            vol = min((rms - threshold) / 2000, 1.0)
         self.current_volume = vol
 
     def _update_alpha(self):
@@ -781,7 +867,16 @@ class VoiceInputApp:
         self.icon = None
         self.running = True
         self.indicator = RecordingIndicator()
-        self.energy_threshold = 300 # 無音判定のしきい値 (RMS)
+        
+        # しきい値を設定から読み込み
+        settings_path = resource_path("settings.json")
+        self.energy_threshold = 300
+        if os.path.exists(settings_path):
+            try:
+                with open(settings_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    self.energy_threshold = data.get("energy_threshold", 300)
+            except: pass
 
         # 録音の設定
         self.recognizer.pause_threshold = 10.0
@@ -933,13 +1028,35 @@ class VoiceInputApp:
                         # WAVEデータを作成
                         raw_data = b''.join(frames)
                         
-                        # 音量のチェック (無音時はスキップ)
-                        rms = audioop.rms(raw_data, 2) # 2はpaInt16のバイト数
-                        print(f" (入力音量: {rms})", end="", flush=True)
-                        # self.indicator.set_volume(rms) # ここでの更新は遅いので削除（ループ内で実施済み）
+                        # 録音終了時に最新のしきい値を再取得
+                        settings_path = resource_path("settings.json")
+                        if os.path.exists(settings_path):
+                            try:
+                                with open(settings_path, "r", encoding="utf-8") as f:
+                                    data = json.load(f)
+                                    self.energy_threshold = data.get("energy_threshold", 300)
+                            except: pass
 
+                        # 音量のチェック (無音時はスキップ)
+                        rms = audioop.rms(raw_data, 2) # 2はpaInt16의バイト数
+                        print(f" (入力音量: {rms}, 閾値: {self.energy_threshold})", end="", flush=True)
                         
                         if rms > self.energy_threshold:
+                            # === 音声のノーマライズ (増幅) ===
+                            # 小さな声でも Gemini が認識しやすいように、最大音量を引き上げる
+                            try:
+                                max_val = audioop.max(raw_data, 2)
+                                if max_val > 0:
+                                    # 最大値が 32767 の 80% 以下なら増幅
+                                    target = 26214 # 32767 * 0.8
+                                    if max_val < target:
+                                        factor = target / max_val
+                                        # 過度な増幅（ノイズ強調）を防ぐため最大10倍まで
+                                        factor = min(factor, 10.0)
+                                        raw_data = audioop.mul(raw_data, 2, factor)
+                                        print(f" [Boost x{factor:.1f}]", end="")
+                            except: pass
+
                             container = io.BytesIO()
                             wf = wave.open(container, 'wb')
                             wf.setnchannels(CHANNELS)

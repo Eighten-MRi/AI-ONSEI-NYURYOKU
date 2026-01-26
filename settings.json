@@ -1,15 +1,12 @@
 {
   "personas": [
     {
-      "name": "デフォルト",
-      "instruction": ""
-    },
-    {
       "name": "新規ペルソナ (NEW)",
       "instruction": ""
     }
   ],
   "active_index": 0,
   "custom_instruction": "",
-  "theme": "Relax Navy"
+  "theme": "Relax Navy",
+  "energy_threshold": 50
 }
