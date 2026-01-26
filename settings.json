@@ -1,7 +1,11 @@
 {
   "personas": [
     {
-      "name": "標準 (旧設定)",
+      "name": "デフォルト",
+      "instruction": ""
+    },
+    {
+      "name": "新規ペルソナ (NEW)",
       "instruction": ""
     }
   ],
