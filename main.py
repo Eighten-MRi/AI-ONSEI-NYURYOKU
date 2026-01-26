@@ -69,7 +69,7 @@ SYSTEM_PROMPT = (
     "5. 【操作コマンドの処理】\n"
     "   - 「まる」と言われたら、文末だとしても「。」に変換する。\n"
     "   - 「てん」と言われたら「、」に変換する。\n"
-    "   - 「改行（かいぎょう）」と言われたら、実際の改行コード(\\n)を出力する（文字として『/』や『\\n』を出さない）。\n"
+    "   - 「改行（かいぎょう）」と言われたら、**実際の改行コード(\\n)のみ**を出力してください。それ以外の付随する文章（例：『今日はいい天気です』等）は絶対に付け加えないでください。\n"
     "   - これらが文中に混ざっている場合も、文脈に応じて記号に変換する。\n"
     "6. 【句読点とスペースの厳格な調整】\n"
     "   - 読点「、」や句点「。」は、明示的な「てん」「まる」の指示がない限り、極力付与しないこと。文脈上どうしても必要な最小限のみに留めてください。\n"
@@ -179,7 +179,7 @@ class SettingsWindow:
         tabs = [
             ("👤 ペルソナ", "persona"),
             ("🎤 音声設定", "audio"),
-            ("🎨 外観・終了", "appearance")
+            ("🎨 外観", "appearance")
         ]
 
         for text, tab_id in tabs:
@@ -199,17 +199,23 @@ class SettingsWindow:
         elif self.current_tab == "appearance":
             self.draw_appearance_tab()
             
-        # --- Footer (Save Status Only) ---
+        # --- Footer ---
         footer_frame = tk.Frame(self.main_frame, bg=self.colors["bg"])
         footer_frame.pack(fill=tk.X, padx=15, pady=(0, 10))
-        
-        self.lbl_save_status = tk.Label(footer_frame, text="", font=self.font_small, 
+
+        # Save Indicator (Top Row of Footer)
+        save_msg_frame = tk.Frame(footer_frame, bg=self.colors["bg"])
+        save_msg_frame.pack(fill=tk.X)
+        self.lbl_save_status = tk.Label(save_msg_frame, text="", font=self.font_small, 
                                         bg=self.colors["bg"], fg=self.colors["fg_primary"])
         self.lbl_save_status.pack(side=tk.RIGHT)
 
-        # Close button always visible in bottom right or somewhere? 
-        # Let's keep a small close button at the bottom
-        self.create_flat_btn(footer_frame, "設定を閉じる", self.window.destroy, style="primary").pack(side=tk.LEFT)
+        # Bottom Buttons (Bottom Row of Footer)
+        btn_frame = tk.Frame(footer_frame, bg=self.colors["bg"])
+        btn_frame.pack(fill=tk.X, pady=(5, 0))
+
+        self.create_flat_btn(btn_frame, "設定を閉じる", self.window.destroy, style="primary").pack(side=tk.LEFT)
+        self.create_flat_btn(btn_frame, "⚠ アプリを完全に終了する", self.on_shutdown, style="danger").pack(side=tk.RIGHT)
 
     def switch_tab(self, tab_id):
         self.current_tab = tab_id
@@ -306,7 +312,7 @@ class SettingsWindow:
         tk.Label(guide_frame, text="← 高感度 (ボソボソ声用)", font=self.font_small, bg=self.colors["bg"], fg=self.colors["fg_header"]).pack(side=tk.LEFT)
         tk.Label(guide_frame, text="雑音に強い (騒がしい場所) →", font=self.font_small, bg=self.colors["bg"], fg=self.colors["fg_danger"]).pack(side=tk.RIGHT)
 
-        self.scale_sense = tk.Scale(slider_outer, from_=10, to=1000, orient=tk.HORIZONTAL, 
+        self.scale_sense = tk.Scale(slider_outer, from_=10, to=500, orient=tk.HORIZONTAL, 
                                     showvalue=False, bg=self.colors["bg"], highlightthickness=0,
                                     troughcolor=self.colors["input_bg"], activebackground=self.colors["active_bg"],
                                     command=lambda e: self.on_sense_change())
@@ -321,27 +327,58 @@ class SettingsWindow:
 
     def draw_appearance_tab(self):
         container = tk.Frame(self.content_container, bg=self.colors["bg"])
-        container.pack(fill=tk.BOTH, expand=True, pady=20)
+        container.pack(fill=tk.BOTH, expand=True, pady=10)
 
-        tk.Label(container, text="🎨 アプリの外観とシステム", font=self.font_header, 
-                 bg=self.colors["bg"], fg=self.colors["fg_header"]).pack(pady=(0, 20))
+        tk.Label(container, text="🎨 アプリの外観テーマ", font=self.font_header, 
+                 bg=self.colors["bg"], fg=self.colors["fg_header"]).pack(pady=(0, 10))
 
-        # Theme Section
-        theme_frame = tk.Frame(container, bg=self.colors["input_bg"], padx=20, pady=20)
-        theme_frame.pack(fill=tk.X, padx=100)
+        # List of themes
+        list_outer = tk.Frame(container, bg=self.colors["border"], padx=1, pady=1)
+        list_outer.pack(fill=tk.BOTH, expand=True, padx=50)
+
+        self.theme_listbox = tk.Listbox(list_outer, exportselection=False, 
+                                        bg=self.colors["input_bg"], fg=self.colors["input_fg"],
+                                        selectbackground=self.colors["select_bg"], selectforeground=self.colors["select_fg"],
+                                        highlightthickness=0, borderwidth=0, font=self.font_main)
+        self.theme_listbox.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        tk.Label(theme_frame, text=f"現在のテーマ: {self.current_theme_name}", font=self.font_bold, 
-                 bg=self.colors["input_bg"], fg=self.colors["input_fg"]).pack(pady=(0, 15))
+        theme_names = list(THEMES.keys())
+        for name in theme_names:
+            self.theme_listbox.insert(tk.END, name)
+            if name == self.current_theme_name:
+                idx = theme_names.index(name)
+                self.theme_listbox.selection_set(idx)
         
-        self.create_flat_btn(theme_frame, "🎨 テーマを切り替える", self.cycle_theme, style="secondary").pack(fill=tk.X)
+        self.theme_listbox.bind("<<ListboxSelect>>", self.on_theme_select)
 
-        # Shutdown Section
-        shutdown_frame = tk.Frame(container, bg=self.colors["bg"], pady=40)
-        shutdown_frame.pack()
+        tk.Label(container, text="※ 一覧から選択すると即座に反映されます", font=self.font_small, 
+                 bg=self.colors["bg"], fg=self.colors["fg_primary"]).pack(pady=10)
 
-        tk.Label(shutdown_frame, text="完全に終了したい場合はこちらを押してください", font=self.font_small, 
-                 bg=self.colors["bg"], fg=self.colors["fg_primary"]).pack(pady=5)
-        self.create_flat_btn(shutdown_frame, "⚠ アプリを完全に終了する", self.on_shutdown, style="danger").pack(padx=20, pady=10)
+    def on_theme_select(self, event):
+        sel = self.theme_listbox.curselection()
+        if sel:
+            theme_names = list(THEMES.keys())
+            new_theme = theme_names[sel[0]]
+            if new_theme != self.current_theme_name:
+                self.apply_theme(new_theme)
+
+    def apply_theme(self, theme_name):
+        self.current_theme_name = theme_name
+        self.colors = THEMES[self.current_theme_name]
+        
+        # Save theme
+        self.settings["theme"] = self.current_theme_name
+        self.save_settings()
+        
+        # Update fonts
+        base_font = self.colors.get("font", "Verdana")
+        self.font_main = (base_font, 10)
+        self.font_bold = (base_font, 10, "bold")
+        self.font_header = (base_font, 11, "bold")
+        self.font_small = (base_font, 8)
+        
+        # Rebuild UI
+        self.rebuild_ui()
 
     def cycle_theme(self):
         theme_names = list(THEMES.keys())
