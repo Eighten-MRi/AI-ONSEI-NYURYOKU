@@ -215,7 +215,7 @@ class SettingsWindow:
         btn_frame.pack(fill=tk.X, pady=(5, 0))
 
         self.create_flat_btn(btn_frame, "設定を閉じる", self.window.destroy, style="primary").pack(side=tk.LEFT)
-        self.create_flat_btn(btn_frame, "⚠ アプリを完全に終了する", self.on_shutdown, style="danger").pack(side=tk.RIGHT)
+        self.create_flat_btn(btn_frame, "アプリを終了する", self.on_shutdown, style="danger").pack(side=tk.RIGHT)
 
     def switch_tab(self, tab_id):
         self.current_tab = tab_id
