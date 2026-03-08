@@ -208,6 +208,12 @@ class RoundedEntry(tk.Canvas):
         
         self.draw()
 
+    def _on_focus_in(self, event):
+        pass
+
+    def _on_focus_out(self, event):
+        pass
+
     def _on_resize(self, event):
         self.width = event.width
         self.height = event.height

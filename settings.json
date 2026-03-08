@@ -6,7 +6,7 @@
     }
   ],
   "active_index": 0,
-  "custom_instruction": "",
+  "energy_threshold": 20,
   "theme": "Relax Navy",
-  "energy_threshold": 20
+  "custom_instruction": ""
 }
