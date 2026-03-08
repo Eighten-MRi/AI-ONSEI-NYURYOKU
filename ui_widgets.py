@@ -111,22 +111,25 @@ class RoundedButton(tk.Canvas):
         self.itemconfig(self.text_id, fill=fg)
 
     def config(self, **kwargs):
+        needs_redraw = False
+        needs_resize = False
+
         if "state" in kwargs:
             self.state = kwargs.pop("state")
-            self.draw()
+            needs_redraw = True
         
         if "text" in kwargs:
             self.text_content = kwargs.pop("text")
-            self._calculate_size()
-            self.draw()
+            needs_resize = True
+            needs_redraw = True
             
         if "bg" in kwargs:
             self.btn_bg = kwargs.pop("bg")
-            self.draw()
+            needs_redraw = True
             
         if "fg" in kwargs:
             self.btn_fg = kwargs.pop("fg")
-            self.draw()
+            needs_redraw = True
             
         if "active_bg" in kwargs:
             self.active_bg = kwargs.pop("active_bg")
@@ -136,12 +139,17 @@ class RoundedButton(tk.Canvas):
             
         if "disabled_bg" in kwargs:
             self.disabled_bg = kwargs.pop("disabled_bg")
-            if self.state == "disabled": self.draw()
+            if self.state == "disabled": needs_redraw = True
             
         if "disabled_fg" in kwargs:
             self.disabled_fg = kwargs.pop("disabled_fg")
-            if self.state == "disabled": self.draw()
-            
+            if self.state == "disabled": needs_redraw = True
+
+        # 全プロパティを反映したあとで1回だけ描画（毎属性変更ごとに描画する無駄を防ぐ）
+        if needs_resize:
+            self._calculate_size()
+        if needs_redraw:
+            self.draw()
         super().config(**kwargs)
         
     def configure(self, **kwargs):
@@ -244,10 +252,6 @@ class RoundedEntry(tk.Canvas):
         # Ensure window is on top
         self.tag_lower("shape")
 
-    def _on_focus_in(self, event):
-        pass
-    def _on_focus_out(self, event):
-        pass
 
     def get(self):
         return self.entry.get()

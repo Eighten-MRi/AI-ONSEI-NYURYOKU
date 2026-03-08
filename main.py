@@ -2,7 +2,6 @@ import os
 import time
 import threading
 import sys
-import platform
 import queue
 import socket # 多重起動チェック用
 import json
@@ -89,6 +88,69 @@ SYSTEM_PROMPT = (
 )
 # 可能な限りユーザーが発言したそのままのニュアンスを保つことが最優先です。
 
+
+class SettingsManager:
+    """設定をメモリ上でキャッシュし、ファイルI/Oを最小化する。
+    ファイルの読み書きは起動時と保存時の1回ずつのみ。"""
+    _DEFAULTS = {
+        "personas": [{"name": "標準", "instruction": ""}],
+        "active_index": 0,
+        "energy_threshold": 300,
+        "theme": "Relax Navy",
+    }
+
+    def __init__(self, path: str):
+        self._path = path
+        self._data = {}
+        self.load()
+
+    def load(self):
+        """ファイルから設定を読み込む（起動時のみ呼ぶ）"""
+        if os.path.exists(self._path):
+            try:
+                with open(self._path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    # 旧フォーマット移行
+                    if "personas" not in data:
+                        old_instr = data.get("custom_instruction", "")
+                        data["personas"] = [{"name": "標準 (旧設定)", "instruction": old_instr}]
+                        data["active_index"] = 0
+                    self._data = {**self._DEFAULTS, **data}
+                    return
+            except Exception as e:
+                print(f"[設定読み込みエラー]: {e}")
+        self._data = {**self._DEFAULTS, "personas": [{"name": "標準", "instruction": ""}]}
+
+    def save(self):
+        """変更時だけ呼ぶ（ファイルへ書き込み）"""
+        try:
+            with open(self._path, "w", encoding="utf-8") as f:
+                json.dump(self._data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"[設定保存エラー]: {e}")
+
+    @property
+    def data(self):
+        """設定 dict への参照（直接変更可能）"""
+        return self._data
+
+    @property
+    def energy_threshold(self):
+        return self._data.get("energy_threshold", 300)
+
+    @property
+    def active_persona_instruction(self):
+        idx = self._data.get("active_index", 0)
+        personas = self._data.get("personas", [])
+        if 0 <= idx < len(personas):
+            return personas[idx].get("instruction", "")
+        return ""
+
+
+# グローバルな設定管理インスタンス（起動時に一度だけファイルを読む）
+settings_manager = SettingsManager(resource_path("settings.json"))
+
+
 THEMES = {
     "Relax Navy": {
         "bg": "#1A2332", "fg_primary": "#E5E9F0", "fg_header": "#88C0D0", "fg_danger": "#BF616A",
@@ -136,8 +198,7 @@ class SettingsWindow:
         self.window.overrideredirect(False)
         self.parent = parent
         
-        self.settings_file = resource_path("settings.json")
-        self.settings = self.load_settings()
+        self.settings = settings_manager.data
         
         # Theme Setup
         self.current_theme_name = self.settings.get("theme", "Relax Navy")
@@ -391,28 +452,9 @@ class SettingsWindow:
 
     def cycle_theme(self):
         theme_names = list(THEMES.keys())
-        try:
-            curr_idx = theme_names.index(self.current_theme_name)
-        except ValueError:
-            curr_idx = 0
-            
+        curr_idx = theme_names.index(self.current_theme_name) if self.current_theme_name in theme_names else 0
         next_idx = (curr_idx + 1) % len(theme_names)
-        self.current_theme_name = theme_names[next_idx]
-        self.colors = THEMES[self.current_theme_name]
-        
-        # Save theme
-        self.settings["theme"] = self.current_theme_name
-        self.save_settings()
-        
-        # Update fonts in case theme changes font
-        base_font = self.colors.get("font", "Verdana")
-        self.font_main = (base_font, 10)
-        self.font_bold = (base_font, 10, "bold")
-        self.font_header = (base_font, 11, "bold")
-        self.font_small = (base_font, 8)
-        
-        # Rebuild UI
-        self.rebuild_ui()
+        self.apply_theme(theme_names[next_idx])
 
     def create_flat_btn(self, parent, text, command, style="secondary"):
         """Custom Flat Button with Hierarchy"""
@@ -439,28 +481,6 @@ class SettingsWindow:
                         padx=16, pady=8, radius=8)
         return btn
 
-    def load_settings(self):
-        default_personas = [{"name": "標準", "instruction": ""}]
-        default_settings = {"personas": default_personas, "active_index": 0}
-        
-        if os.path.exists(self.settings_file):
-            try:
-                with open(self.settings_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    
-                    # Migration: Old format to new format
-                    if "personas" not in data:
-                        # Convert old custom_instruction to a persona
-                        old_instr = data.get("custom_instruction", "")
-                        data["personas"] = [{"name": "標準 (旧設定)", "instruction": old_instr}]
-                        data["active_index"] = 0
-                        # Clean up old key if desired, but keeping minimal change is safer
-                    
-                    return {**default_settings, **data}
-            except:
-                pass
-        return default_settings
-
     def show_save_indicator(self):
         """Show a temporary 'SAVED' message"""
         self.lbl_save_status.config(text="[ 保存完了 (SAVED) ]")
@@ -470,12 +490,8 @@ class SettingsWindow:
         self._save_timer = self.window.after(2000, lambda: self.lbl_save_status.config(text=""))
 
     def save_settings(self):
-        try:
-            with open(self.settings_file, "w", encoding="utf-8") as f:
-                json.dump(self.settings, f, ensure_ascii=False, indent=2)
-            self.show_save_indicator()
-        except Exception as e:
-            print(f"Save failed: {e}")
+        settings_manager.save()
+        self.show_save_indicator()
 
     def refresh_list(self):
         self.listbox.delete(0, tk.END)
@@ -518,7 +534,10 @@ class SettingsWindow:
         text = self.text_instruction.get("1.0", tk.END).strip()
         if 0 <= self.current_index < len(self.settings["personas"]):
             self.settings["personas"][self.current_index]["instruction"] = text
-            self.save_settings()
+            # デバウンス: 500ms入力が止まってから保存（キー入力ごとの連続ディスク書き込みを防ぐ）
+            if hasattr(self, "_save_debounce") and self._save_debounce:
+                self.window.after_cancel(self._save_debounce)
+            self._save_debounce = self.window.after(500, self.save_settings)
 
     def add_persona(self):
         new_persona = {"name": "新規ペルソナ (NEW)", "instruction": ""}
@@ -735,12 +754,6 @@ class RecordingIndicator:
         sw = SettingsWindow(self.root, on_quit_callback=self.on_quit_callback)
         self.settings_window = sw.window
 
-    def on_click(self, event):
-        pass
-
-    def draw_grid(self):
-        # グリッドは廃止（透明感重視）
-        pass
 
     def set_recording(self, recording):
         self.is_recording = recording
@@ -756,17 +769,9 @@ class RecordingIndicator:
         self._update_alpha()
         
     def set_volume(self, rms):
-        # 設定ファイルから現在のしきい値を取得（インジケータのアニメーション用）
-        threshold = 300
-        settings_path = resource_path("settings.json")
-        if os.path.exists(settings_path):
-            try:
-                with open(settings_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    threshold = data.get("energy_threshold", 300)
-            except: pass
-
-        if rms < threshold: 
+        # settings_managerからメモリ上のしきい値を取得（ファイルI/Oなし）
+        threshold = settings_manager.energy_threshold
+        if rms < threshold:
             vol = 0
         else:
             vol = min((rms - threshold) / 2000, 1.0)
@@ -807,8 +812,6 @@ class RecordingIndicator:
         if self.is_processing:
             # === 処理中: グリッチ＆カラーシフト ===
             self.processing_frame += 1
-            progress = (self.processing_frame % 20) / 20.0 
-            
             swing_progress = (math.sin(self.processing_frame * 0.2) + 1) / 2 
             main_color = self.interpolate_color(self.color_process_start, self.color_process_end, swing_progress)
             glow_color = self.interpolate_color((100,50,0), (100,0,0), swing_progress)
@@ -855,13 +858,6 @@ class RecordingIndicator:
                 if random.random() > 0.90:
                      # PQRSTシーケンス生成
                      # フラット -> P -> Q -> R -> S -> T
-                     h = 15 # 基準高さ
-                     seq = [0, 0, -3, -4, -2, 0, 0, 2, 40, -10, -5, 0, 0, -6, -8, -4, 0, 0] 
-                     # Y座標は画面座標系なので、上(マイナス)がプラス波、下(プラス)がマイナス波
-                     # 修正: 上向き(R波のピーク)はYを減らす
-                     
-                     # 修正seq: P(小上), Q(小下), R(大上), S(大下), T(中上)
-                     # 画面Y座標: 上(-), 下(+)
                      seq = [0]*2 + \
                            [-3, -4, -2] + [0]*2 + \
                            [2, 3] + [-25, -30] + [8, 10] + [0]*2 + \
@@ -914,15 +910,7 @@ class VoiceInputApp:
         self.running = True
         self.indicator = RecordingIndicator()
         
-        # しきい値を設定から読み込み
-        settings_path = resource_path("settings.json")
-        self.energy_threshold = 300
-        if os.path.exists(settings_path):
-            try:
-                with open(settings_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    self.energy_threshold = data.get("energy_threshold", 300)
-            except: pass
+        self.energy_threshold = settings_manager.energy_threshold
 
         # 録音の設定
         self.recognizer.pause_threshold = 10.0
@@ -939,32 +927,12 @@ class VoiceInputApp:
     def process_with_gemini_audio(self, audio_bytes):
         """音声データを直接Geminiに送信して、聞き取りと成形を同時に行う"""
         try:
-            # Load settings for dynamic prompt
-            settings_path = resource_path("settings.json")
-            custom_instruction = ""
-            if os.path.exists(settings_path):
-                try:
-                    with open(settings_path, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                        # New Persona logic
-                        if "personas" in data:
-                            idx = data.get("active_index", 0)
-                            if 0 <= idx < len(data["personas"]):
-                                custom_instruction = data["personas"][idx].get("instruction", "")
-                        else:
-                            # Fallback to old format
-                            custom_instruction = data.get("custom_instruction", "")
-                except:
-                    pass
-
-            # Build prompt with settings
+            # プロンプト構築
             prompt = SYSTEM_PROMPT
-            
-            # Append custom instruction
+            custom_instruction = settings_manager.active_persona_instruction
             if custom_instruction:
                 prompt += f"\n\n【追加指示（重要）】\n{custom_instruction}"
-
-            prompt += "\n\n添付された音声を聞き取り、指示通りに成形したテキストのみを答えてください。"
+            prompt += "\n\n添付された音声を聴き取り、指示通りに成形したテキストのみを答えてください。"
 
             response = model.generate_content([
                 prompt,
@@ -1040,7 +1008,7 @@ class VoiceInputApp:
         p = pyaudio.PyAudio()
         FORMAT = pyaudio.paInt16
         CHANNELS = 1
-        RATE = 44100
+        RATE = 16000  # 16kHzで十分（人明の声帯域をカバー）。44100Hz比で生データが素4分の1に削減
         CHUNK = 1024
 
         print("--- 録音待機中 ---")
@@ -1092,14 +1060,8 @@ class VoiceInputApp:
                         # WAVEデータを作成
                         raw_data = b''.join(frames)
                         
-                        # 録音終了時に最新のしきい値を再取得
-                        settings_path = resource_path("settings.json")
-                        if os.path.exists(settings_path):
-                            try:
-                                with open(settings_path, "r", encoding="utf-8") as f:
-                                    data = json.load(f)
-                                    self.energy_threshold = data.get("energy_threshold", 300)
-                            except: pass
+                        # 録音終了時に最新のしきい値を再取得 (settings_managerからメモリ内で取得)
+                        self.energy_threshold = settings_manager.energy_threshold
 
                         # 音量のチェック (無音時はスキップ)
                         rms = audioop.rms(raw_data, 2) # 2はpaInt16의バイト数
