@@ -38,8 +38,11 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 # Geminiの初期化
 genai.configure(api_key=GOOGLE_API_KEY)
-MODEL_NAME = "gemini-2.0-flash-lite"
-model = genai.GenerativeModel(MODEL_NAME)
+MODEL_NAME = "gemini-2.5-flash-lite"
+model = genai.GenerativeModel(
+    MODEL_NAME,
+    generation_config=genai.GenerationConfig(temperature=0)
+)
 
 # 多重起動を防ぐためのポート番号
 LOCK_PORT = 65432
@@ -59,6 +62,7 @@ def is_already_running():
 
 # システムプロンプトの設定
 SYSTEM_PROMPT = (
+    "【聞き取り精度最優先】音声から聞こえた言葉を正確に書き起こしてください。聞こえていない言葉を補完したり、推測で言い換えたりすることは禁止です。\n"
     "あなたは超高精度な文字起こしアシスタントです。ユーザーの録音音声を聞き取り、以下のルールに従って**最終的に言いたかったことだけ**をテキスト化してください。\n"
     "【最重要指示】ユーザーとの対話（「了解しました」等の返答、挨拶、説明）は一切禁止です。文字起こししたテキストのみを出力してください。\n"
     "1. 【徹底したクレンジング】\n"
