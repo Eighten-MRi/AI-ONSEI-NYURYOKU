@@ -2,14 +2,15 @@ import os
 import time
 import threading
 import sys
-import queue
+import asyncio
+import contextlib
 import socket # 多重起動チェック用
 import json
 
-import speech_recognition as sr
 import keyboard
-import audioop # 音量解析用
-import google.generativeai as genai
+import audioop # 音量解析用・波形アニメーション用
+from google import genai
+from google.genai import types
 import pyperclip
 import pyautogui
 from dotenv import load_dotenv
@@ -36,13 +37,9 @@ from ui_widgets import RoundedButton, RoundedEntry
 load_dotenv(resource_path(".env"))
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
-# Geminiの初期化
-genai.configure(api_key=GOOGLE_API_KEY)
-MODEL_NAME = "gemini-2.5-flash-lite"
-model = genai.GenerativeModel(
-    MODEL_NAME,
-    generation_config=genai.GenerationConfig(temperature=0)
-)
+# Gemini Live API の初期化
+LIVE_MODEL = "gemini-2.0-flash-live-001"
+client = genai.Client(api_key=GOOGLE_API_KEY)
 
 # 多重起動を防ぐためのポート番号
 LOCK_PORT = 65432
@@ -100,6 +97,7 @@ class SettingsManager:
         "personas": [{"name": "標準", "instruction": ""}],
         "active_index": 0,
         "energy_threshold": 300,
+        "tail_duration": 0.6,
         "theme": "Relax Navy",
     }
 
@@ -141,6 +139,10 @@ class SettingsManager:
     @property
     def energy_threshold(self):
         return self._data.get("energy_threshold", 300)
+
+    @property
+    def tail_duration(self):
+        return self._data.get("tail_duration", 0.6)
 
     @property
     def active_persona_instruction(self):
@@ -227,6 +229,8 @@ class SettingsWindow:
         self.var_name = tk.StringVar()
         self.var_sense_val = tk.IntVar()
         self.var_sense_val.set(self.settings.get("energy_threshold", 300))
+        self.var_tail_val = tk.DoubleVar()
+        self.var_tail_val.set(self.settings.get("tail_duration", 0.6))
         self.current_tab = "persona" # persona, audio, appearance
 
         # === Layout ===
@@ -398,6 +402,38 @@ class SettingsWindow:
         help_box.pack(fill=tk.X, padx=50, pady=10)
         help_text = "💡 アドバイス:\n・静かな部屋で使う場合は 30〜80 程度がおすすめです。\n・テレビや外の音がうるさい場合は 200〜400 程度に上げてください。\n・バーを動かして「保存完了」が出れば、次の録音から反映されます。"
         tk.Label(help_box, text=help_text, font=self.font_small, bg=self.colors["input_bg"], fg=self.colors["input_fg"], justify=tk.LEFT).pack()
+
+        # テール録音時間スライダー
+        tk.Label(container, text="⏱ テール録音時間（キーを離した後の追加録音）",
+                 font=self.font_header, bg=self.colors["bg"], fg=self.colors["fg_header"]).pack(pady=(20, 5))
+
+        tail_val_frame = tk.Frame(container, bg=self.colors["bg"])
+        tail_val_frame.pack(pady=5)
+        tk.Label(tail_val_frame, text="現在の値:", font=self.font_main,
+                 bg=self.colors["bg"], fg=self.colors["fg_primary"]).pack(side=tk.LEFT)
+        tk.Label(tail_val_frame, textvariable=self.var_tail_val,
+                 font=(self.colors["font"], 16, "bold"),
+                 bg=self.colors["bg"], fg=self.colors["active_bg"]).pack(side=tk.LEFT, padx=10)
+        tk.Label(tail_val_frame, text="秒", font=self.font_main,
+                 bg=self.colors["bg"], fg=self.colors["fg_primary"]).pack(side=tk.LEFT)
+
+        tail_slider_outer = tk.Frame(container, bg=self.colors["bg"])
+        tail_slider_outer.pack(fill=tk.X, padx=50, pady=5)
+        tail_guide = tk.Frame(tail_slider_outer, bg=self.colors["bg"])
+        tail_guide.pack(fill=tk.X)
+        tk.Label(tail_guide, text="← 短い (0.0秒)", font=self.font_small,
+                 bg=self.colors["bg"], fg=self.colors["fg_header"]).pack(side=tk.LEFT)
+        tk.Label(tail_guide, text="長い (2.0秒) →", font=self.font_small,
+                 bg=self.colors["bg"], fg=self.colors["fg_danger"]).pack(side=tk.RIGHT)
+        self.scale_tail = tk.Scale(
+            tail_slider_outer, from_=0.0, to=2.0, resolution=0.1,
+            orient=tk.HORIZONTAL, showvalue=False,
+            bg=self.colors["bg"], highlightthickness=0,
+            troughcolor=self.colors["input_bg"], activebackground=self.colors["active_bg"],
+            command=lambda e: self.on_tail_change()
+        )
+        self.scale_tail.set(self.settings.get("tail_duration", 0.6))
+        self.scale_tail.pack(fill=tk.X, pady=5)
 
     def draw_appearance_tab(self):
         container = tk.Frame(self.content_container, bg=self.colors["bg"])
@@ -586,6 +622,12 @@ class SettingsWindow:
         val = self.scale_sense.get()
         self.settings["energy_threshold"] = val
         self.var_sense_val.set(val)
+        self.save_settings()
+
+    def on_tail_change(self):
+        val = round(self.scale_tail.get(), 1)
+        self.settings["tail_duration"] = val
+        self.var_tail_val.set(val)
         self.save_settings()
 
     def update_active_display(self):
@@ -904,22 +946,20 @@ class RecordingIndicator:
 
 class VoiceInputApp:
     def __init__(self):
-        self.recognizer = sr.Recognizer()
-        self.microphone = sr.Microphone()
         self.is_recording = False
-        self.use_ai = True  # AI使用フラグ
-        self.audio_queue = queue.Queue()
         self.recording_key = "right alt"
         self.icon = None
         self.running = True
         self.indicator = RecordingIndicator()
-        
-        self.energy_threshold = settings_manager.energy_threshold
+        self._last_pasted_len = 0
+        self._session_running = False  # 二重セッション防止フラグ
 
-        # 録音の設定
-        self.recognizer.pause_threshold = 10.0
-        with self.microphone as source:
-            self.recognizer.adjust_for_ambient_noise(source, duration=1)
+        # asyncio ループをバックグラウンドスレッドで常時起動
+        self._async_loop = asyncio.new_event_loop()
+        self._asyncio_thread = threading.Thread(
+            target=self._async_loop.run_forever, daemon=True
+        )
+        self._asyncio_thread.start()
 
     def on_quit(self):
         """アプリ終了処理"""
@@ -928,237 +968,142 @@ class VoiceInputApp:
         sys.exit(0)
 
 
-    def process_with_gemini_audio(self, audio_bytes):
-        """音声データを直接Geminiに送信して、聞き取りと成形を同時に行う"""
-        try:
-            # プロンプト構築
-            prompt = SYSTEM_PROMPT
-            custom_instruction = settings_manager.active_persona_instruction
-            if custom_instruction:
-                prompt += f"\n\n【追加指示（重要）】\n{custom_instruction}"
-            prompt += "\n\n添付された音声を聴き取り、指示通りに成形したテキストのみを答えてください。"
+    def _postprocess(self, text: str) -> str:
+        """テキスト後処理: [NEWLINE] 変換・フィラー誤認識対応・文末まる削除"""
+        text = text.strip()
+        check_text = text.replace("。", "").replace("、", "").replace(".", "").replace("！", "").replace("!", "")
+        newline_patterns = [
+            "改行", "かいぎょう", "カイギョウ", "会場", "了解", "良好", "[NEWLINE]",
+            "退場", "開票", "海峡", "解雇", "外教", "大行", "体表", "大京", "会議用",
+            "採用", "大会", "対応", "大綱", "開業", "開放", "解像"
+        ]
+        if check_text in newline_patterns:
+            return "\n"
+        text = text.replace("。[NEWLINE]", "[NEWLINE]")
+        text = text.replace("[NEWLINE]", "\n")
+        text = text.replace("。\n", "\n")
+        if text.endswith("。"):
+            text = text[:-1]
+        return text
 
-            response = model.generate_content([
-                prompt,
-                {"mime_type": "audio/wav", "data": audio_bytes}
-            ])
-            
-            # Geminiが勝手に出力する前後の不要な空白・改行（\\n）を完全に除去する
-            # ※これで「勝手に改行される」問題を解決
-            text = response.text.strip()
-            
-            # 短いレスポンスでの改行指示のフォールバック
-            # 「了解」「良好」「開票」「海峡」「大会」「採用」「退場」など、「かいぎょう」の誤認パターンを幅広く吸収する
-            check_text = text.replace("。", "").replace("、", "").replace(".", "").replace("！", "").replace("!", "")
-            newline_patterns = [
-                "改行", "かいぎょう", "カイギョウ", "会場", "了解", "良好", "[NEWLINE]",
-                "退場", "開票", "海峡", "解雇", "外教", "大行", "体表", "大京", "会議用",
-                "採用", "大会", "対応", "大綱", "開業", "開放", "解像"
-            ]
-            if check_text in newline_patterns:
-                return "\n"
-                
-            # 「。[NEWLINE]」を「[NEWLINE]」に（改行前のまるを消去）
-            text = text.replace("。[NEWLINE]", "[NEWLINE]")
-            
-            # 特殊トークン `[NEWLINE]` を実際の改行コード（\\n）に変換
-            # ※これで「改行がされない」問題を解決
-            text = text.replace("[NEWLINE]", "\n")
-            
-            # 「。\\n」を「\\n」に（念のため）
-            text = text.replace("。\n", "\n")
-            
-            # 最後に文末の「。」を削除（ユーザー要望：入力の最後にまるは要らない）
-            if text.endswith("。"):
-                text = text[:-1]
-            
-            if not text:
-                return None
-            
-            return text
-        except Exception as e:
-            print(f"[Gemini直接処理失敗]: {e}")
-            # エラー視覚化 (メインスレッドで実行)
-            self.indicator.root.after(0, self.indicator.show_error)
-            return None
-
-
-    def type_text(self, text):
-        """以前動作していた安定版をベースに、メニュー干渉対策を適用"""
-        if not text: return
-        try:
-            # 1. クリップボードにコピー
-            pyperclip.copy(text)
-            time.sleep(0.05) 
-            
-            # 2. フォーカス復帰ハック (中和法と併用し、確実にフォーカスを確保)
-            # 既に中和されているはずだが、念のため Ctrl タップでフォーカスを再確認
-            pyautogui.press('ctrl')
-            time.sleep(0.01)
-            
-            # 3. 貼り付け実行
+    def _update_pasted_text(self, new_text: str):
+        """Tkinter スレッドから呼ぶ: 前回貼り付けを Backspace で消してから新テキストを貼る"""
+        if self._last_pasted_len > 0:
+            pyautogui.press('backspace', presses=self._last_pasted_len)
+            time.sleep(0.03)
+        if new_text:
+            pyperclip.copy(new_text)
             pyautogui.hotkey('ctrl', 'v')
-            
-            print(f" -> ペースト完了: {len(text)} 文字")
+        self._last_pasted_len = len(new_text)
+
+    async def _send_audio_chunks(self, session):
+        """音声を 100ms チャンクで Live API に送信し続ける（asyncio コルーチン）"""
+        import pyaudio
+        CHUNK = 1600  # 100ms @ 16kHz
+        loop = asyncio.get_running_loop()
+        p = pyaudio.PyAudio()
+        stream = p.open(format=pyaudio.paInt16, channels=1, rate=16000,
+                        input=True, frames_per_buffer=CHUNK)
+        try:
+            while self.is_recording and self.running:
+                data = await loop.run_in_executor(
+                    None, lambda: stream.read(CHUNK, exception_on_overflow=False)
+                )
+                rms = audioop.rms(data, 2)
+                self.indicator.set_volume(rms)  # 波形アニメーション維持
+                await session.send_realtime_input(
+                    audio=types.Blob(data=data, mime_type="audio/pcm;rate=16000")
+                )
+            # テール録音（キーリリース後も発話末尾を拾う）
+            tail = settings_manager.tail_duration
+            deadline = time.time() + tail
+            while time.time() < deadline and self.running:
+                data = await loop.run_in_executor(
+                    None, lambda: stream.read(CHUNK, exception_on_overflow=False)
+                )
+                rms = audioop.rms(data, 2)
+                self.indicator.set_volume(rms)
+                await session.send_realtime_input(
+                    audio=types.Blob(data=data, mime_type="audio/pcm;rate=16000")
+                )
+        finally:
+            stream.stop_stream()
+            stream.close()
+            p.terminate()
+
+    async def _receive_text(self, session):
+        """Live API からテキストを受信し、逐次ペーストする（asyncio コルーチン）"""
+        accumulated = ""
+        async for response in session.receive():
+            if not self.running:
+                break
+            chunk = getattr(response, "text", None)
+            if chunk:
+                accumulated += chunk
+                display_text = self._postprocess(accumulated)
+                self.indicator.root.after(
+                    0, lambda t=display_text: self._update_pasted_text(t)
+                )
+
+    async def _live_transcribe_session(self):
+        """Live API セッション全体を管理する asyncio コルーチン"""
+        self._last_pasted_len = 0  # 各セッション開始時にリセット
+        persona_instruction = settings_manager.active_persona_instruction
+        system_prompt = SYSTEM_PROMPT
+        if persona_instruction:
+            system_prompt += f"\n\n【追加指示（重要）】\n{persona_instruction}"
+
+        config = types.LiveConnectConfig(
+            response_modalities=["TEXT"],
+            system_instruction=system_prompt,
+        )
+        try:
+            async with client.aio.live.connect(model=LIVE_MODEL, config=config) as session:
+                send_task = asyncio.ensure_future(self._send_audio_chunks(session))
+                recv_task = asyncio.ensure_future(self._receive_text(session))
+                await send_task  # 音声送信（テール録音込み）が完了するまで待つ
+                # 最大5秒だけ最終レスポンスを待ち、超えたらキャンセル
+                try:
+                    await asyncio.wait_for(recv_task, timeout=5.0)
+                except asyncio.TimeoutError:
+                    recv_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await recv_task
         except Exception as e:
-            print(f"[貼り付けエラー]: {e}")
+            print(f"[Live セッションエラー]: {e}")
+            self.indicator.root.after(0, lambda: self.indicator.show_error())
+        finally:
+            self._session_running = False  # セッション終了を通知（次の録音を許可）
 
     def record_audio(self):
-        """録音ループ: キーの状態に同期"""
-        import pyaudio
-        import io
-        import wave
-
-        p = pyaudio.PyAudio()
-        FORMAT = pyaudio.paInt16
-        CHANNELS = 1
-        RATE = 16000  # 16kHzで十分（人明の声帯域をカバー）。44100Hz比で生データが素4分の1に削減
-        CHUNK = 1024
-
+        """キー検知のみ。音声収集は _send_audio_chunks で行う"""
         print("--- 録音待機中 ---")
         while self.running:
-            try:
-                # 右Alt (キーコード165) を優先検知
-                is_pressed = keyboard.is_pressed(165) or keyboard.is_pressed(self.recording_key)
-
-                if is_pressed and not self.is_recording:
-                    self.is_recording = True
-                    self.indicator.set_recording(True)
-
-                    # === 【重要】Altキーの中和処理 (Neutralization) ===
-                    # Altだけが押されて離されるとWindowsのメニューが反応する。
-                    # 録音開始（Alt押下）直後にShiftを空打ちすることで、
-                    # Windowsに「Alt単体押しではない」と認識させ、メニュー起動を根絶する。
-                    keyboard.press('shift')
-                    keyboard.release('shift')
-
-                    # Altキー押下イベントを遮断 (他のアプリへの漏洩防止)
-                    try: keyboard.block_key(165)
-                    except: pass
-                    
-                    try:
-                        frames = []
-                        stream = p.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK)
-                        
-                        while (keyboard.is_pressed(165) or keyboard.is_pressed(self.recording_key)) and self.running:
-                            data = stream.read(CHUNK, exception_on_overflow=False)
-                            frames.append(data)
-                            rms = audioop.rms(data, 2)
-                            self.indicator.set_volume(rms)
-                        
-                        # 末尾の切れ防止 (約0.6秒)
-                        for _ in range(10):
-                            frames.append(stream.read(CHUNK, exception_on_overflow=False))
-                        
-                        stream.stop_stream()
-                        stream.close()
-                    finally:
-                        self.indicator.set_recording(False)
-                        # 必ずブロックを解除
-                        try: keyboard.unblock_key(165)
-                        except: pass
-
-
-
-                    if frames:
-                        # WAVEデータを作成
-                        raw_data = b''.join(frames)
-                        
-                        # 録音終了時に最新のしきい値を再取得 (settings_managerからメモリ内で取得)
-                        self.energy_threshold = settings_manager.energy_threshold
-
-                        # 音量のチェック (無音時はスキップ)
-                        rms = audioop.rms(raw_data, 2) # 2はpaInt16의バイト数
-                        print(f" (入力音量: {rms}, 閾値: {self.energy_threshold})", end="", flush=True)
-                        
-                        if rms > self.energy_threshold:
-                            # === 音声のノーマライズ (増幅) ===
-                            # 小さな声でも Gemini が認識しやすいように、最大音量を引き上げる
-                            try:
-                                max_val = audioop.max(raw_data, 2)
-                                if max_val > 0:
-                                    # 最大値が 32767 の 80% 以下なら増幅
-                                    target = 26214 # 32767 * 0.8
-                                    if max_val < target:
-                                        factor = target / max_val
-                                        # 過度な増幅（ノイズ強調）を防ぐため最大10倍まで
-                                        factor = min(factor, 10.0)
-                                        raw_data = audioop.mul(raw_data, 2, factor)
-                                        print(f" [Boost x{factor:.1f}]", end="")
-                            except: pass
-
-                            container = io.BytesIO()
-                            wf = wave.open(container, 'wb')
-                            wf.setnchannels(CHANNELS)
-                            wf.setsampwidth(p.get_sample_size(FORMAT))
-                            wf.setframerate(RATE)
-                            wf.writeframes(raw_data)
-                            wf.close()
-                            # 音声バイト列をキューに入れる
-                            self.audio_queue.put(container.getvalue())
-                        else:
-                            print(" -> 無音のためスキップ")
-                    
-                    self.is_recording = False
-            except Exception as e:
-                print(f"[録音エラー]: {e}")
+            is_pressed = keyboard.is_pressed(165) or keyboard.is_pressed(self.recording_key)
+            if is_pressed and not self.is_recording and not self._session_running:
+                self.is_recording = True
+                self._session_running = True
+                self.indicator.set_recording(True)
+                # === Altキーの中和処理 ===
+                keyboard.press('shift')
+                keyboard.release('shift')
+                try: keyboard.block_key(165)
+                except: pass
+                # asyncio ループで Live セッション開始
+                asyncio.run_coroutine_threadsafe(
+                    self._live_transcribe_session(), self._async_loop
+                )
+            elif not is_pressed and self.is_recording:
                 self.is_recording = False
                 self.indicator.set_recording(False)
-
-
-                time.sleep(1)
-
+                try: keyboard.unblock_key(165)
+                except: pass
             time.sleep(0.01)
-        p.terminate()
-
-    def main_loop(self):
-        """処理ループ"""
-        while self.running:
-            if not self.audio_queue.empty():
-                audio_bytes = self.audio_queue.get()
-                
-                try:
-                    self.indicator.set_processing(True) # 処理中開始
-                    if self.use_ai:
-                        # AIがONなら直接Geminiで処理（爆速）
-                        print("[Geminiで直接処理中...]", end="", flush=True)
-                        refined_text = self.process_with_gemini_audio(audio_bytes)
-                        if refined_text:
-                            print(f" -> {refined_text}")
-                            self.type_text(refined_text)
-                    else:
-                        # AIがOFFなら従来のGoogle音声認識
-                        print("[Google音声認識中...]", end="", flush=True)
-                        import io
-                        with sr.AudioFile(io.BytesIO(audio_bytes)) as source:
-                            audio_data = self.recognizer.record(source)
-                            raw_text = self.recognizer.recognize_google(audio_data, language="ja-JP")
-                            print(f" -> {raw_text}")
-                            self.type_text(raw_text)
-
-                except Exception as e:
-                    print(f" -> [!] 処理失敗: {e}")
-                finally:
-                    self.indicator.set_processing(False) # 処理中終了
-
-
-            
-            time.sleep(0.1)
 
     def run(self):
         """アプリ開始"""
-        # 処理ループを別スレッドで開始
         threading.Thread(target=self.record_audio, daemon=True).start()
-        threading.Thread(target=self.main_loop, daemon=True).start()
-        
-        # コンテキストメニュー設定（不要になったので削除）
-        # self.indicator.setup_context_menu(self.on_quit)
-        
-        # コールバック設定
         self.indicator.set_callback(self.on_quit)
-
-        
-        # Tkinter (インジケータ) をメインスレッドで実行
         self.indicator.run()
 
 if __name__ == "__main__":

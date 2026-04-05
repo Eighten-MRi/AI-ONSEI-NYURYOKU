@@ -1,7 +1,6 @@
-SpeechRecognition
 pyaudio
 keyboard
-google-generativeai
+google-genai
 pyperclip
 pyautogui
 python-dotenv
