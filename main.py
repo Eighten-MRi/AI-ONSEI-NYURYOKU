@@ -13,6 +13,9 @@ import google.generativeai as genai
 import pyperclip
 import pyautogui
 from dotenv import load_dotenv
+import asyncio
+from google import genai as genai_live
+from google.genai import types as genai_live_types
 
 # アプリ化のためのライブラリ
 def resource_path(relative_path):
@@ -38,7 +41,7 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 # Geminiの初期化
 genai.configure(api_key=GOOGLE_API_KEY)
-MODEL_NAME = "gemini-2.5-flash-lite"
+MODEL_NAME = "gemini-3.1-flash-lite-preview"
 model = genai.GenerativeModel(
     MODEL_NAME,
     generation_config=genai.GenerationConfig(temperature=0)
@@ -101,6 +104,7 @@ class SettingsManager:
         "active_index": 0,
         "energy_threshold": 300,
         "theme": "Relax Navy",
+        "live_model": "gemini-3.1-flash-live-preview",
     }
 
     def __init__(self, path: str):
@@ -143,6 +147,10 @@ class SettingsManager:
         return self._data.get("energy_threshold", 300)
 
     @property
+    def live_model(self):
+        return self._data.get("live_model", "gemini-3.1-flash-live-preview")
+
+    @property
     def active_persona_instruction(self):
         idx = self._data.get("active_index", 0)
         personas = self._data.get("personas", [])
@@ -154,6 +162,37 @@ class SettingsManager:
 # グローバルな設定管理インスタンス（起動時に一度だけファイルを読む）
 settings_manager = SettingsManager(resource_path("settings.json"))
 
+
+VOICE_MODELS = {
+    "gemini-3.1-flash-live-preview": {
+        "label": "Gemini 3.1 Flash Live",
+        "type": "live",
+        "type_label": "Live API",
+        "speed": "爆速（~0.3秒）",
+        "cost": "~$6.50/月（~¥1,000）",
+    },
+    "gemini-2.5-flash-native-audio-latest": {
+        "label": "Gemini 2.5 Flash Native Audio",
+        "type": "live",
+        "type_label": "Live API",
+        "speed": "爆速（~0.3秒）",
+        "cost": "~$6.50/月（~¥1,000）",
+    },
+    "gemini-3.1-flash-lite-preview": {
+        "label": "Gemini 3.1 Flash Lite",
+        "type": "batch",
+        "type_label": "バッチAPI",
+        "speed": "やや遅い（2~5秒）",
+        "cost": "~$0.50/月（~¥80）",
+    },
+    "gemini-2.5-flash": {
+        "label": "Gemini 2.5 Flash",
+        "type": "batch",
+        "type_label": "バッチAPI",
+        "speed": "やや遅い（2~5秒）",
+        "cost": "~$0.80/月（~¥120）",
+    },
+}
 
 THEMES = {
     "Relax Navy": {
@@ -194,7 +233,7 @@ class SettingsWindow:
     def __init__(self, parent, on_quit_callback=None):
         self.window = tk.Toplevel(parent)
         self.window.title("SYSTEM CONFIG") # Title update
-        self.window.geometry("720x520") 
+        self.window.geometry("720x520")
         self.on_quit_callback = on_quit_callback
         
         self.window.attributes("-alpha", 1.0)
@@ -253,7 +292,8 @@ class SettingsWindow:
         tabs = [
             ("👤 ペルソナ", "persona"),
             ("🎤 音声設定", "audio"),
-            ("🎨 外観", "appearance")
+            ("🤖 モデル", "model"),
+            ("🎨 外観", "appearance"),
         ]
 
         for text, tab_id in tabs:
@@ -270,6 +310,8 @@ class SettingsWindow:
             self.draw_persona_tab()
         elif self.current_tab == "audio":
             self.draw_audio_tab()
+        elif self.current_tab == "model":
+            self.draw_model_tab()
         elif self.current_tab == "appearance":
             self.draw_appearance_tab()
             
@@ -398,6 +440,49 @@ class SettingsWindow:
         help_box.pack(fill=tk.X, padx=50, pady=10)
         help_text = "💡 アドバイス:\n・静かな部屋で使う場合は 30〜80 程度がおすすめです。\n・テレビや外の音がうるさい場合は 200〜400 程度に上げてください。\n・バーを動かして「保存完了」が出れば、次の録音から反映されます。"
         tk.Label(help_box, text=help_text, font=self.font_small, bg=self.colors["input_bg"], fg=self.colors["input_fg"], justify=tk.LEFT).pack()
+
+    def draw_model_tab(self):
+        container = tk.Frame(self.content_container, bg=self.colors["bg"])
+        container.pack(fill=tk.BOTH, expand=True, pady=20)
+
+        tk.Label(container, text="🤖 音声認識モデル選択", font=self.font_header,
+                 bg=self.colors["bg"], fg=self.colors["fg_header"]).pack(pady=(0, 10))
+
+        model_desc = "※ 1日100回・平均10秒の録音を想定した月額目安です。次の録音から反映されます。"
+        tk.Label(container, text=model_desc, font=self.font_small, bg=self.colors["bg"], fg=self.colors["fg_primary"]).pack(pady=(0, 12))
+
+        current_model = self.settings.get("live_model", "gemini-3.1-flash-live-preview")
+        for model_id, info in VOICE_MODELS.items():
+            is_selected = model_id == current_model
+            card_bg = self.colors["active_bg"] if is_selected else self.colors["input_bg"]
+            card_fg = self.colors["active_fg"] if is_selected else self.colors["fg_primary"]
+            sub_fg = self.colors["active_fg"] if is_selected else self.colors["fg_header"]
+            marker = "●" if is_selected else "○"
+
+            card = tk.Frame(container, bg=card_bg, padx=12, pady=8, cursor="hand2")
+            card.pack(fill=tk.X, padx=40, pady=4)
+
+            # 1行目: マーカー + モデル名
+            tk.Label(card, text=f"{marker}  {info['label']}", font=self.font_bold,
+                     bg=card_bg, fg=card_fg, anchor="w").pack(fill=tk.X)
+            # 2行目: 種別 + 速度
+            tk.Label(card, text=f"   種別: {info['type_label']}    速度: {info['speed']}", font=self.font_small,
+                     bg=card_bg, fg=sub_fg, anchor="w").pack(fill=tk.X)
+            # 3行目: コスト
+            tk.Label(card, text=f"   月額目安: {info['cost']}", font=self.font_small,
+                     bg=card_bg, fg=sub_fg, anchor="w").pack(fill=tk.X)
+
+            # カード全体 + 全子ウィジェットにクリックイベントをバインド
+            click_handler = lambda e, mid=model_id: self.on_model_select(mid)
+            card.bind("<Button-1>", click_handler)
+            for child in card.winfo_children():
+                child.bind("<Button-1>", click_handler)
+
+    def on_model_select(self, model_id):
+        self.settings["live_model"] = model_id
+        settings_manager.save()
+        self.show_save_indicator()
+        self.rebuild_ui()
 
     def draw_appearance_tab(self):
         container = tk.Frame(self.content_container, bg=self.colors["bg"])
@@ -605,6 +690,155 @@ class SettingsWindow:
             self.window.destroy()
             self.on_quit_callback()
 
+
+
+class LiveTranscriber:
+    """Gemini Live API を使ったリアルタイム音声書き起こし"""
+
+    def __init__(self, api_key, on_final, on_error, system_prompt=None, model=None):
+        self.api_key = api_key
+        self.on_final = on_final       # callback(text) — 確定テキスト
+        self.on_error = on_error       # callback(err_msg)
+        self.model = model or "gemini-3.1-flash-live-preview"
+        self.system_prompt = system_prompt
+        self._audio_queue = queue.Queue()
+        self._loop = None
+        self._thread = None
+        self._running = False
+        self._finished = threading.Event()
+
+    def start(self):
+        """asyncio スレッドを起動し Live API セッションを開始"""
+        self._running = True
+        self._thread = threading.Thread(target=self._run_loop, daemon=True)
+        self._thread.start()
+
+    def send_audio(self, pcm_data):
+        """録音スレッドから PCM チャンクを送る"""
+        if self._running:
+            self._audio_queue.put(pcm_data)
+
+    def stop_session(self):
+        """キー離し時にセッションを終了させる"""
+        self._running = False
+        self._audio_queue.put(None)  # sentinel
+
+    def wait_for_completion(self, timeout=5.0):
+        """Live API処理の完了を待機（タイムアウト付き）"""
+        self._finished.wait(timeout=timeout)
+
+    # ── 内部メソッド ──
+
+    def _run_loop(self):
+        """専用 asyncio イベントループを実行"""
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+        try:
+            self._loop.run_until_complete(self._session_loop())
+        except Exception as e:
+            print(f"[LiveTranscriber] ループエラー: {e}")
+            self.on_error(str(e))
+        finally:
+            # pending タスクをキャンセルしてからループを閉じる
+            pending = asyncio.all_tasks(self._loop)
+            for task in pending:
+                task.cancel()
+            if pending:
+                self._loop.run_until_complete(
+                    asyncio.gather(*pending, return_exceptions=True)
+                )
+            self._loop.close()
+            self._finished.set()
+
+    async def _session_loop(self):
+        """WebSocket 接続 → 送受信 → クローズ"""
+        client = genai_live.Client(api_key=self.api_key)
+        config = genai_live_types.LiveConnectConfig(
+            response_modalities=["AUDIO"],
+            system_instruction=self.system_prompt,
+            output_audio_transcription=genai_live_types.AudioTranscriptionConfig(),
+            realtime_input_config=genai_live_types.RealtimeInputConfig(
+                automatic_activity_detection=genai_live_types.AutomaticActivityDetection(
+                    disabled=True
+                ),
+            ),
+        )
+        try:
+            async with client.aio.live.connect(
+                model=self.model,
+                config=config,
+            ) as session:
+                # 手動 VAD: 発話開始を通知
+                await session.send_realtime_input(
+                    activity_start=genai_live_types.ActivityStart()
+                )
+                send_task = asyncio.create_task(self._send_audio(session))
+                recv_task = asyncio.create_task(self._receive_transcription(session))
+                try:
+                    await asyncio.gather(send_task, recv_task)
+                except Exception:
+                    for task in (send_task, recv_task):
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(send_task, recv_task, return_exceptions=True)
+                    raise
+        except Exception as e:
+            print(f"[LiveTranscriber] セッションエラー: {e}")
+            self.on_error(str(e))
+        finally:
+            try:
+                await client.aio.aclose()
+            except Exception:
+                pass
+
+    async def _send_audio(self, session):
+        """キューから PCM を取り出して WebSocket へ送信"""
+        try:
+            while True:
+                # ノンブロッキングで取り出し、なければ少し待つ
+                try:
+                    data = self._audio_queue.get_nowait()
+                except queue.Empty:
+                    if not self._running:
+                        break
+                    await asyncio.sleep(0.01)
+                    continue
+
+                if data is None:  # sentinel — 録音終了
+                    await session.send_realtime_input(
+                        activity_end=genai_live_types.ActivityEnd()
+                    )
+                    break
+
+                await session.send_realtime_input(
+                    audio=genai_live_types.Blob(
+                        data=data,
+                        mime_type="audio/pcm;rate=16000",
+                    )
+                )
+        except Exception as e:
+            print(f"[LiveTranscriber] 送信エラー: {e}")
+
+    async def _receive_transcription(self, session):
+        """サーバーからのメッセージを受信し書き起こしをコールバック"""
+        try:
+            output_text_parts = []
+            async for msg in session.receive():
+                sc = msg.server_content
+                if sc is None:
+                    continue
+
+                # モデル音声応答の書き起こしを蓄積
+                if sc.output_transcription and sc.output_transcription.text:
+                    output_text_parts.append(sc.output_transcription.text)
+
+                if sc.turn_complete:
+                    if output_text_parts:
+                        self.on_final("".join(output_text_parts))
+                    break
+        except Exception as e:
+            if self._running:
+                print(f"[LiveTranscriber] 受信エラー: {e}")
 
 
 class RecordingIndicator:
@@ -928,7 +1162,36 @@ class VoiceInputApp:
         sys.exit(0)
 
 
-    def process_with_gemini_audio(self, audio_bytes):
+    @staticmethod
+    def _post_process_text(text):
+        """Gemini の生テキストを整形する（バッチ API / 将来の Live API 共通）"""
+        text = text.strip()
+        if not text:
+            return None
+
+        # 短いレスポンスでの改行指示のフォールバック
+        check_text = text.replace("。", "").replace("、", "").replace(".", "").replace("！", "").replace("!", "")
+        newline_patterns = [
+            "改行", "かいぎょう", "カイギョウ", "会場", "了解", "良好", "[NEWLINE]",
+            "退場", "開票", "海峡", "解雇", "外教", "大行", "体表", "大京", "会議用",
+            "採用", "大会", "対応", "大綱", "開業", "開放", "解像"
+        ]
+        if check_text in newline_patterns:
+            return "\n"
+
+        # 「。[NEWLINE]」→「[NEWLINE]」（改行前のまるを消去）
+        text = text.replace("。[NEWLINE]", "[NEWLINE]")
+        # [NEWLINE] → 実際の改行
+        text = text.replace("[NEWLINE]", "\n")
+        # 「。\n」→「\n」
+        text = text.replace("。\n", "\n")
+        # 文末の「。」を削除
+        if text.endswith("。"):
+            text = text[:-1]
+
+        return text if text else None
+
+    def process_with_gemini_audio(self, audio_bytes, batch_model_name=None):
         """音声データを直接Geminiに送信して、聞き取りと成形を同時に行う"""
         try:
             # プロンプト構築
@@ -938,50 +1201,32 @@ class VoiceInputApp:
                 prompt += f"\n\n【追加指示（重要）】\n{custom_instruction}"
             prompt += "\n\n添付された音声を聴き取り、指示通りに成形したテキストのみを答えてください。"
 
-            response = model.generate_content([
+            target_model = model
+            if batch_model_name and batch_model_name != MODEL_NAME:
+                target_model = genai.GenerativeModel(
+                    batch_model_name,
+                    generation_config=genai.GenerationConfig(temperature=0)
+                )
+
+            response = target_model.generate_content([
                 prompt,
                 {"mime_type": "audio/wav", "data": audio_bytes}
             ])
-            
-            # Geminiが勝手に出力する前後の不要な空白・改行（\\n）を完全に除去する
-            # ※これで「勝手に改行される」問題を解決
-            text = response.text.strip()
-            
-            # 短いレスポンスでの改行指示のフォールバック
-            # 「了解」「良好」「開票」「海峡」「大会」「採用」「退場」など、「かいぎょう」の誤認パターンを幅広く吸収する
-            check_text = text.replace("。", "").replace("、", "").replace(".", "").replace("！", "").replace("!", "")
-            newline_patterns = [
-                "改行", "かいぎょう", "カイギョウ", "会場", "了解", "良好", "[NEWLINE]",
-                "退場", "開票", "海峡", "解雇", "外教", "大行", "体表", "大京", "会議用",
-                "採用", "大会", "対応", "大綱", "開業", "開放", "解像"
-            ]
-            if check_text in newline_patterns:
-                return "\n"
-                
-            # 「。[NEWLINE]」を「[NEWLINE]」に（改行前のまるを消去）
-            text = text.replace("。[NEWLINE]", "[NEWLINE]")
-            
-            # 特殊トークン `[NEWLINE]` を実際の改行コード（\\n）に変換
-            # ※これで「改行がされない」問題を解決
-            text = text.replace("[NEWLINE]", "\n")
-            
-            # 「。\\n」を「\\n」に（念のため）
-            text = text.replace("。\n", "\n")
-            
-            # 最後に文末の「。」を削除（ユーザー要望：入力の最後にまるは要らない）
-            if text.endswith("。"):
-                text = text[:-1]
-            
-            if not text:
-                return None
-            
-            return text
+
+            return self._post_process_text(response.text)
         except Exception as e:
             print(f"[Gemini直接処理失敗]: {e}")
-            # エラー視覚化 (メインスレッドで実行)
             self.indicator.root.after(0, self.indicator.show_error)
             return None
 
+
+    def _handle_live_result(self, text):
+        """Live API の整形済みテキストを受け取り、後処理してペーストする"""
+        refined = self._post_process_text(text)
+        if refined:
+            print(f"[Live API 整形結果] {refined}")
+            self._live_result_received = True
+            self.type_text(refined)
 
     def type_text(self, text):
         """以前動作していた安定版をベースに、メニュー干渉対策を適用"""
@@ -1035,42 +1280,77 @@ class VoiceInputApp:
                     # Altキー押下イベントを遮断 (他のアプリへの漏洩防止)
                     try: keyboard.block_key(165)
                     except: pass
-                    
+
+                    # --- モデル種別判定 ---
+                    selected_model = settings_manager.live_model
+                    model_info = VOICE_MODELS.get(selected_model, {})
+                    use_live = model_info.get("type") == "live"
+
+                    self._live_result_received = False
+                    transcriber = None
+
+                    if use_live:
+                        # Live API: 録音中にストリーミング送信
+                        live_prompt = SYSTEM_PROMPT
+                        custom_instruction = settings_manager.active_persona_instruction
+                        if custom_instruction:
+                            live_prompt += f"\n\n【追加指示（重要）】\n{custom_instruction}"
+                        transcriber = LiveTranscriber(
+                            api_key=GOOGLE_API_KEY,
+                            on_final=lambda t: self._handle_live_result(t),
+                            on_error=lambda e: self.indicator.root.after(0, self.indicator.show_error),
+                            system_prompt=live_prompt,
+                            model=selected_model,
+                        )
+                        transcriber.start()
+
                     try:
                         frames = []
                         stream = p.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK)
-                        
+
                         while (keyboard.is_pressed(165) or keyboard.is_pressed(self.recording_key)) and self.running:
                             data = stream.read(CHUNK, exception_on_overflow=False)
                             frames.append(data)
                             rms = audioop.rms(data, 2)
                             self.indicator.set_volume(rms)
-                        
+                            if transcriber:
+                                transcriber.send_audio(data)
+
                         # 末尾の切れ防止 (約0.6秒)
                         for _ in range(10):
-                            frames.append(stream.read(CHUNK, exception_on_overflow=False))
-                        
+                            extra = stream.read(CHUNK, exception_on_overflow=False)
+                            frames.append(extra)
+                            if transcriber:
+                                transcriber.send_audio(extra)
+
                         stream.stop_stream()
                         stream.close()
                     finally:
                         self.indicator.set_recording(False)
+                        if transcriber:
+                            transcriber.stop_session()
                         # 必ずブロックを解除
                         try: keyboard.unblock_key(165)
                         except: pass
 
+                    # Live API の処理完了を待ってからフォールバック判定
+                    if transcriber:
+                        transcriber.wait_for_completion(timeout=5.0)
 
-
-                    if frames:
-                        # WAVEデータを作成
+                    if frames and not self._live_result_received:
+                        if use_live:
+                            print("[Live APIフォールバック → バッチAPI]")
+                        else:
+                            print(f"[バッチAPI: {selected_model}]")
                         raw_data = b''.join(frames)
-                        
+
                         # 録音終了時に最新のしきい値を再取得 (settings_managerからメモリ内で取得)
                         self.energy_threshold = settings_manager.energy_threshold
 
                         # 音量のチェック (無音時はスキップ)
-                        rms = audioop.rms(raw_data, 2) # 2はpaInt16의バイト数
+                        rms = audioop.rms(raw_data, 2) # 2はpaInt16のバイト数
                         print(f" (入力音量: {rms}, 閾値: {self.energy_threshold})", end="", flush=True)
-                        
+
                         if rms > self.energy_threshold:
                             # === 音声のノーマライズ (増幅) ===
                             # 小さな声でも Gemini が認識しやすいように、最大音量を引き上げる
@@ -1094,11 +1374,14 @@ class VoiceInputApp:
                             wf.setframerate(RATE)
                             wf.writeframes(raw_data)
                             wf.close()
-                            # 音声バイト列をキューに入れる
-                            self.audio_queue.put(container.getvalue())
+                            # 音声バイト列とモデル名をキューに入れる（バッチAPI用）
+                            batch_model = selected_model if not use_live else None
+                            self.audio_queue.put((container.getvalue(), batch_model))
                         else:
                             print(" -> 無音のためスキップ")
-                    
+                    elif self._live_result_received:
+                        print("[Live API で処理済み → バッチAPIスキップ]")
+
                     self.is_recording = False
             except Exception as e:
                 print(f"[録音エラー]: {e}")
@@ -1115,14 +1398,18 @@ class VoiceInputApp:
         """処理ループ"""
         while self.running:
             if not self.audio_queue.empty():
-                audio_bytes = self.audio_queue.get()
-                
+                item = self.audio_queue.get()
+                if isinstance(item, tuple):
+                    audio_bytes, batch_model = item
+                else:
+                    audio_bytes, batch_model = item, None
+
                 try:
                     self.indicator.set_processing(True) # 処理中開始
                     if self.use_ai:
                         # AIがONなら直接Geminiで処理（爆速）
                         print("[Geminiで直接処理中...]", end="", flush=True)
-                        refined_text = self.process_with_gemini_audio(audio_bytes)
+                        refined_text = self.process_with_gemini_audio(audio_bytes, batch_model_name=batch_model)
                         if refined_text:
                             print(f" -> {refined_text}")
                             self.type_text(refined_text)

@@ -8,5 +8,6 @@
   "active_index": 0,
   "energy_threshold": 20,
   "theme": "Relax Navy",
+  "live_model": "gemini-2.5-flash",
   "custom_instruction": ""
 }
