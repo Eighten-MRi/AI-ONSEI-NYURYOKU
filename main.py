@@ -103,7 +103,7 @@ class SettingsManager:
         "personas": [{"name": "標準", "instruction": ""}],
         "active_index": 0,
         "energy_threshold": 300,
-        "theme": "Relax Navy",
+        "theme": "Linear",
         "live_model": "gemini-3.1-flash-live-preview",
     }
 
@@ -195,6 +195,14 @@ VOICE_MODELS = {
 }
 
 THEMES = {
+    "Linear": {
+        "bg": "#0f1011", "fg_primary": "#d0d6e0", "fg_header": "#f7f8f8", "fg_danger": "#e5484d",
+        "input_bg": "#191a1b", "input_fg": "#d0d6e0",
+        "btn_bg": "#191a1b", "btn_fg": "#d0d6e0",
+        "btn_danger_bg": "#1a1011", "btn_danger_fg": "#e5484d",
+        "select_bg": "#5e6ad2", "select_fg": "#f7f8f8", "border": "#23252a",
+        "active_bg": "#5e6ad2", "active_fg": "#f7f8f8", "font": "Segoe UI"
+    },
     "Relax Navy": {
         "bg": "#1A2332", "fg_primary": "#E5E9F0", "fg_header": "#88C0D0", "fg_danger": "#BF616A",
         "input_bg": "#293245", "input_fg": "#E5E9F0", 
@@ -244,17 +252,17 @@ class SettingsWindow:
         self.settings = settings_manager.data
         
         # Theme Setup
-        self.current_theme_name = self.settings.get("theme", "Relax Navy")
+        self.current_theme_name = self.settings.get("theme", "Linear")
         if self.current_theme_name not in THEMES:
-             self.current_theme_name = "Relax Navy"
+             self.current_theme_name = "Linear"
         self.colors = THEMES[self.current_theme_name]
         
         # Font Setup
-        base_font = self.colors.get("font", "Verdana")
+        base_font = self.colors.get("font", "Segoe UI")
         self.font_main = (base_font, 10)
         self.font_bold = (base_font, 10, "bold")
-        self.font_header = (base_font, 11, "bold")
-        self.font_small = (base_font, 8)
+        self.font_header = (base_font, 12, "bold")
+        self.font_small = (base_font, 9)
         
         self.window.config(bg=self.colors["bg"])
         
@@ -271,7 +279,7 @@ class SettingsWindow:
         # === Layout ===
         # Main Container with Border
         self.main_frame = tk.Frame(self.window, bg=self.colors["bg"], 
-                              highlightbackground=self.colors["border"], highlightthickness=2)
+                              highlightbackground=self.colors["border"], highlightthickness=1)
         self.main_frame.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
         
         self.rebuild_ui()
@@ -289,6 +297,10 @@ class SettingsWindow:
         tab_frame = tk.Frame(self.main_frame, bg=self.colors["bg"])
         tab_frame.pack(fill=tk.X, padx=10, pady=(10, 0))
 
+        # Tab separator line
+        separator = tk.Frame(self.main_frame, bg=self.colors["border"], height=1)
+        separator.pack(fill=tk.X, padx=10)
+
         tabs = [
             ("👤 ペルソナ", "persona"),
             ("🎤 音声設定", "audio"),
@@ -304,7 +316,7 @@ class SettingsWindow:
 
         # Content Area
         self.content_container = tk.Frame(self.main_frame, bg=self.colors["bg"])
-        self.content_container.pack(fill=tk.BOTH, expand=True, padx=15, pady=10)
+        self.content_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=12)
 
         if self.current_tab == "persona":
             self.draw_persona_tab()
@@ -317,7 +329,7 @@ class SettingsWindow:
             
         # --- Footer ---
         footer_frame = tk.Frame(self.main_frame, bg=self.colors["bg"])
-        footer_frame.pack(fill=tk.X, padx=15, pady=(0, 10))
+        footer_frame.pack(fill=tk.X, padx=20, pady=(0, 12))
 
         # Save Indicator (Top Row of Footer)
         save_msg_frame = tk.Frame(footer_frame, bg=self.colors["bg"])
@@ -371,17 +383,19 @@ class SettingsWindow:
         frame_name = tk.Frame(frame_right, bg=self.colors["bg"])
         frame_name.pack(fill=tk.X, pady=(0, 15))
         tk.Label(frame_name, text="識別名 (ID):", font=self.font_bold, bg=self.colors["bg"], fg=self.colors["fg_header"]).pack(side=tk.LEFT, padx=(0,10))
-        self.entry_name = RoundedEntry(frame_name, textvariable=self.var_name, 
-                                   bg=self.colors["input_bg"], fg=self.colors["input_fg"], 
-                                   insertbackground=self.colors["fg_primary"], font=self.font_main, radius=8, height=36)
+        self.entry_name = RoundedEntry(frame_name, textvariable=self.var_name,
+                                   bg=self.colors["input_bg"], fg=self.colors["input_fg"],
+                                   insertbackground=self.colors["fg_primary"], font=self.font_main, radius=8, height=36,
+                                   focus_color=self.colors["active_bg"])
         self.entry_name.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
         self.entry_name.bind_entry("<FocusOut>", self.on_name_change) 
         
         tk.Label(frame_right, text="AI指示プロンプト (書き起こし調整):", font=self.font_bold, bg=self.colors["bg"], fg=self.colors["fg_header"]).pack(anchor=tk.W, pady=(0, 5))
         text_container = tk.Frame(frame_right, bg=self.colors["border"], padx=1, pady=1)
         text_container.pack(fill=tk.BOTH, expand=True)
-        self.text_instruction = tk.Text(text_container, height=1, width=40, bg=self.colors["input_bg"], fg=self.colors["input_fg"], 
-                                        insertbackground=self.colors["fg_primary"], highlightthickness=0, borderwidth=0, font=self.font_main, padx=10, pady=10)
+        self.text_instruction = tk.Text(text_container, height=1, width=40, bg=self.colors["input_bg"], fg=self.colors["input_fg"],
+                                        insertbackground=self.colors["fg_primary"], highlightthickness=0, borderwidth=0, font=self.font_main, padx=10, pady=10,
+                                        selectbackground=self.colors["select_bg"], selectforeground=self.colors["select_fg"])
         self.text_instruction.pack(fill=tk.BOTH, expand=True)
         self.text_instruction.bind("<KeyRelease>", self.on_text_change)
 
@@ -530,11 +544,11 @@ class SettingsWindow:
         self.save_settings()
         
         # Update fonts
-        base_font = self.colors.get("font", "Verdana")
+        base_font = self.colors.get("font", "Segoe UI")
         self.font_main = (base_font, 10)
         self.font_bold = (base_font, 10, "bold")
-        self.font_header = (base_font, 11, "bold")
-        self.font_small = (base_font, 8)
+        self.font_header = (base_font, 12, "bold")
+        self.font_small = (base_font, 9)
         
         # Rebuild UI
         self.rebuild_ui()
@@ -917,12 +931,12 @@ class RecordingIndicator:
         self.alpha_active = 0.9
         
         # カラー定義
-        self.color_idle = "#00FF00"    
-        self.color_recording = "#00FFFF" 
-        self.color_process_start = (255, 165, 0) 
-        self.color_process_end = (255, 0, 0)     
-        self.color_error = "#800080" 
-        self.color_grid = "#003333"
+        self.color_idle = "#d0d6e0"
+        self.color_recording = "#7170ff"
+        self.color_process_start = (94, 106, 210)
+        self.color_process_end = (113, 112, 255)
+        self.color_error = "#e5484d"
+        self.color_grid = "#23252a"
         
         self.on_quit_callback = None
         
@@ -1052,7 +1066,7 @@ class RecordingIndicator:
             self.processing_frame += 1
             swing_progress = (math.sin(self.processing_frame * 0.2) + 1) / 2 
             main_color = self.interpolate_color(self.color_process_start, self.color_process_end, swing_progress)
-            glow_color = self.interpolate_color((100,50,0), (100,0,0), swing_progress)
+            glow_color = self.interpolate_color((30,33,66), (35,35,80), swing_progress)
 
             noise = random.randint(-15, 15)
             self.points.append(base_y + noise)
@@ -1065,7 +1079,7 @@ class RecordingIndicator:
                 self._update_alpha()
             
             main_color = self.color_error
-            glow_color = "#4b0082" # Indigo
+            glow_color = "#3d1517"
             
             # ランダムで鋭いスパイク
             if random.random() > 0.7:
@@ -1077,7 +1091,7 @@ class RecordingIndicator:
         elif self.is_recording:
             # === 録音中: 音量連動 ===
             main_color = self.color_recording
-            glow_color = "#008080"
+            glow_color = "#3b3b7a"
             
             # 音量に応じて振れ幅を変える
             # 基本ノイズ(1) + 音量ブースト (感度を微調整)
@@ -1088,7 +1102,7 @@ class RecordingIndicator:
         else:
             # === 待機中: PQRST心拍 ===
             main_color = self.color_idle
-            glow_color = "#003300"
+            glow_color = "#3b3d45"
             
             if not self.pqrst_queue:
                 # ランダムな間隔で鼓動を入れる

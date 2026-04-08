@@ -30,8 +30,8 @@ class RoundedButton(tk.Canvas):
             else:
                 self.font = tkfont.Font(font=font)
         else:
-            self.font = tkfont.Font(family="Verdana", size=10)
-            
+            self.font = tkfont.Font(family="Segoe UI", size=10)
+
         self._calculate_size()
         
         self.shapes = []
@@ -165,26 +165,29 @@ class RoundedEntry(tk.Canvas):
                  **kwargs):
                      
         canvas_bg = kwargs.pop('bg', parent.cget('bg'))
+        focus_color = kwargs.pop('focus_color', "#5e6ad2")
         super().__init__(parent, bg=canvas_bg, highlightthickness=0, borderwidth=0, **kwargs)
-        
+
         self.radius = radius
         self.entry_bg = bg
         self.entry_fg = fg
         self.border_color = border_color
         self.border_width = border_width
-        
+        self._original_border_color = border_color
+        self.focus_color = focus_color
+
         self.width = width
         self.height = height
         self.configure(width=self.width, height=self.height)
-        
+
         if font:
             if isinstance(font, tkfont.Font):
                 self.font = font
             else:
                 self.font = tkfont.Font(font=font)
         else:
-            self.font = tkfont.Font(family="Verdana", size=10)
-        
+            self.font = tkfont.Font(family="Segoe UI", size=10)
+
         # Embed Entry
         padding = 4
         
@@ -209,10 +212,12 @@ class RoundedEntry(tk.Canvas):
         self.draw()
 
     def _on_focus_in(self, event):
-        pass
+        self.border_color = self.focus_color
+        self.draw()
 
     def _on_focus_out(self, event):
-        pass
+        self.border_color = self._original_border_color
+        self.draw()
 
     def _on_resize(self, event):
         self.width = event.width
