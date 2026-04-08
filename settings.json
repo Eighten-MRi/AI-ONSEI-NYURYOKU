@@ -8,6 +8,6 @@
   "active_index": 0,
   "energy_threshold": 20,
   "theme": "Linear",
-  "live_model": "gemini-3.1-flash-lite-preview",
+  "live_model": "gemini-3.1-flash-live-preview",
   "custom_instruction": ""
 }

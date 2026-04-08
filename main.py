@@ -23,7 +23,15 @@ def resource_path(relative_path):
     try:
         base_path = sys._MEIPASS
     except Exception:
-        base_path = os.path.abspath(os.path.dirname(__file__))
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_path, relative_path)
+
+def data_path(relative_path):
+    """永続データ用パス（設定ファイルなど、再起動後も保持される場所）"""
+    if getattr(sys, 'frozen', False):
+        base_path = os.path.dirname(sys.executable)
+    else:
+        base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
 
 
@@ -160,7 +168,7 @@ class SettingsManager:
 
 
 # グローバルな設定管理インスタンス（起動時に一度だけファイルを読む）
-settings_manager = SettingsManager(resource_path("settings.json"))
+settings_manager = SettingsManager(data_path("settings.json"))
 
 
 VOICE_MODELS = {
@@ -201,48 +209,69 @@ THEMES = {
         "btn_bg": "#191a1b", "btn_fg": "#d0d6e0",
         "btn_danger_bg": "#1a1011", "btn_danger_fg": "#e5484d",
         "select_bg": "#5e6ad2", "select_fg": "#f7f8f8", "border": "#23252a",
-        "active_bg": "#5e6ad2", "active_fg": "#f7f8f8", "font": "Segoe UI"
+        "active_bg": "#5e6ad2", "active_fg": "#f7f8f8", "font": "Segoe UI",
+        "wave_idle": "#d0d6e0", "wave_rec": "#7170ff",
+        "wave_proc_start": "#e5a02e", "wave_proc_end": "#e5484d",
     },
     "Relax Navy": {
         "bg": "#1A2332", "fg_primary": "#E5E9F0", "fg_header": "#88C0D0", "fg_danger": "#BF616A",
-        "input_bg": "#293245", "input_fg": "#E5E9F0", 
+        "input_bg": "#293245", "input_fg": "#E5E9F0",
         "btn_bg": "#293245", "btn_fg": "#E5E9F0",
         "btn_danger_bg": "#252020", "btn_danger_fg": "#BF616A",
         "select_bg": "#434C5E", "select_fg": "#E5E9F0", "border": "#3B4252",
-        "active_bg": "#88C0D0", "active_fg": "#1A2332", "font": "Verdana"
+        "active_bg": "#88C0D0", "active_fg": "#1A2332", "font": "Verdana",
+        "wave_idle": "#88C0D0", "wave_rec": "#5E81AC",
+        "wave_proc_start": "#EBCB8B", "wave_proc_end": "#BF616A",
     },
-    "Cafe Mocha": {
-        "bg": "#3E3535", "fg_primary": "#E8DDCB", "fg_header": "#D4A373", "fg_danger": "#C2716F",
-        "input_bg": "#4E4444", "input_fg": "#E8DDCB", 
-        "btn_bg": "#4E4444", "btn_fg": "#E8DDCB",
-        "btn_danger_bg": "#352e2e", "btn_danger_fg": "#C2716F",
-        "select_bg": "#D4A373", "select_fg": "#3E3535", "border": "#594D4D",
-        "active_bg": "#D4A373", "active_fg": "#3E3535", "font": "Verdana"
+    "Spotify": {
+        "bg": "#121212", "fg_primary": "#b3b3b3", "fg_header": "#ffffff", "fg_danger": "#f3727f",
+        "input_bg": "#1f1f1f", "input_fg": "#ffffff",
+        "btn_bg": "#1f1f1f", "btn_fg": "#ffffff",
+        "btn_danger_bg": "#1a0a0a", "btn_danger_fg": "#f3727f",
+        "select_bg": "#1ed760", "select_fg": "#121212", "border": "#282828",
+        "active_bg": "#1ed760", "active_fg": "#121212", "font": "Segoe UI",
+        "wave_idle": "#1ed760", "wave_rec": "#539df5",
+        "wave_proc_start": "#ffa42b", "wave_proc_end": "#f3727f",
     },
-    "Gruvbox": {
-        "bg": "#282828", "fg_primary": "#ebdbb2", "fg_header": "#fabd2f", "fg_danger": "#fb4934",
-        "input_bg": "#3c3836", "input_fg": "#ebdbb2", 
-        "btn_bg": "#3c3836", "btn_fg": "#ebdbb2",
-        "btn_danger_bg": "#202020", "btn_danger_fg": "#fb4934",
-        "select_bg": "#d79921", "select_fg": "#282828", "border": "#504945",
-        "active_bg": "#b8bb26", "active_fg": "#282828", "font": "Verdana"
+    "Raycast": {
+        "bg": "#07080a", "fg_primary": "#cecece", "fg_header": "#f9f9f9", "fg_danger": "#FF6363",
+        "input_bg": "#101111", "input_fg": "#f9f9f9",
+        "btn_bg": "#101111", "btn_fg": "#cecece",
+        "btn_danger_bg": "#1a0808", "btn_danger_fg": "#FF6363",
+        "select_bg": "#FF6363", "select_fg": "#ffffff", "border": "#252829",
+        "active_bg": "#FF6363", "active_fg": "#ffffff", "font": "Segoe UI",
+        "wave_idle": "#9c9c9d", "wave_rec": "#FF6363",
+        "wave_proc_start": "#ffbc33", "wave_proc_end": "#FF6363",
     },
-    "Cyberpunk": {
-        "bg": "#050510", "fg_primary": "#00ffff", "fg_header": "#00ff99", "fg_danger": "#ff0055",
-        "input_bg": "#1a1a30", "input_fg": "#ffffff", 
-        "btn_bg": "#1a1a30", "btn_fg": "#00ffff",
-        "btn_danger_bg": "#100000", "btn_danger_fg": "#ff0055",
-        "select_bg": "#00ffff", "select_fg": "#000000", "border": "#00ffff",
-        "active_bg": "#00ff99", "active_fg": "#000000", "font": "Consolas"
-    }
+    "Claude": {
+        "bg": "#f5f4ed", "fg_primary": "#5e5d59", "fg_header": "#141413", "fg_danger": "#b53333",
+        "input_bg": "#ffffff", "input_fg": "#141413",
+        "btn_bg": "#e8e6dc", "btn_fg": "#4d4c48",
+        "btn_danger_bg": "#f0e0e0", "btn_danger_fg": "#b53333",
+        "select_bg": "#c96442", "select_fg": "#ffffff", "border": "#e8e6dc",
+        "active_bg": "#c96442", "active_fg": "#ffffff", "font": "Georgia",
+        "wave_idle": "#c96442", "wave_rec": "#d97757",
+        "wave_proc_start": "#d4a373", "wave_proc_end": "#b53333",
+    },
+    "ElevenLabs": {
+        "bg": "#f5f5f5", "fg_primary": "#4e4e4e", "fg_header": "#000000", "fg_danger": "#cc3333",
+        "input_bg": "#ffffff", "input_fg": "#000000",
+        "btn_bg": "#f5f2ef", "btn_fg": "#000000",
+        "btn_danger_bg": "#f5e0e0", "btn_danger_fg": "#cc3333",
+        "select_bg": "#000000", "select_fg": "#ffffff", "border": "#e5e5e5",
+        "active_bg": "#000000", "active_fg": "#ffffff", "font": "Segoe UI",
+        "wave_idle": "#b0aea5", "wave_rec": "#777169",
+        "wave_proc_start": "#c9a06a", "wave_proc_end": "#cc3333",
+    },
 }
 
 class SettingsWindow:
-    def __init__(self, parent, on_quit_callback=None):
+    def __init__(self, parent, on_quit_callback=None, on_theme_change=None):
         self.window = tk.Toplevel(parent)
-        self.window.title("SYSTEM CONFIG") # Title update
+        self.window.title("SYSTEM CONFIG")
         self.window.geometry("720x520")
         self.on_quit_callback = on_quit_callback
+        self.on_theme_change = on_theme_change
         
         self.window.attributes("-alpha", 1.0)
         self.window.attributes("-topmost", True)
@@ -293,26 +322,38 @@ class SettingsWindow:
         self.main_frame.config(bg=self.colors["bg"], highlightbackground=self.colors["border"])
         self.window.config(bg=self.colors["bg"])
 
-        # --- Tab Header ---
+        # --- Tab Header (Underline Style) ---
         tab_frame = tk.Frame(self.main_frame, bg=self.colors["bg"])
-        tab_frame.pack(fill=tk.X, padx=10, pady=(10, 0))
-
-        # Tab separator line
-        separator = tk.Frame(self.main_frame, bg=self.colors["border"], height=1)
-        separator.pack(fill=tk.X, padx=10)
+        tab_frame.pack(fill=tk.X, padx=16, pady=(12, 0))
 
         tabs = [
-            ("👤 ペルソナ", "persona"),
-            ("🎤 音声設定", "audio"),
-            ("🤖 モデル", "model"),
-            ("🎨 外観", "appearance"),
+            ("ペルソナ", "persona"),
+            ("音声設定", "audio"),
+            ("モデル", "model"),
+            ("外観", "appearance"),
         ]
 
         for text, tab_id in tabs:
             is_active = (self.current_tab == tab_id)
-            btn = self.create_flat_btn(tab_frame, text, lambda tid=tab_id: self.switch_tab(tid), 
-                                      style="primary" if is_active else "secondary")
-            btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+            tab_item = tk.Frame(tab_frame, bg=self.colors["bg"])
+            tab_item.pack(side=tk.LEFT, padx=(0, 4))
+
+            lbl = tk.Label(tab_item, text=text, font=self.font_bold,
+                           bg=self.colors["bg"], cursor="hand2",
+                           fg=self.colors["fg_header"] if is_active else self.colors["fg_primary"],
+                           padx=12, pady=6)
+            lbl.pack()
+
+            # Active indicator (underline)
+            indicator_color = self.colors["active_bg"] if is_active else self.colors["bg"]
+            indicator = tk.Frame(tab_item, bg=indicator_color, height=2)
+            indicator.pack(fill=tk.X)
+
+            lbl.bind("<Button-1>", lambda e, tid=tab_id: self.switch_tab(tid))
+
+        # Tab separator line
+        separator = tk.Frame(self.main_frame, bg=self.colors["border"], height=1)
+        separator.pack(fill=tk.X, padx=16)
 
         # Content Area
         self.content_container = tk.Frame(self.main_frame, bg=self.colors["bg"])
@@ -328,69 +369,79 @@ class SettingsWindow:
             self.draw_appearance_tab()
             
         # --- Footer ---
+        footer_sep = tk.Frame(self.main_frame, bg=self.colors["border"], height=1)
+        footer_sep.pack(fill=tk.X, padx=16)
+
         footer_frame = tk.Frame(self.main_frame, bg=self.colors["bg"])
-        footer_frame.pack(fill=tk.X, padx=20, pady=(0, 12))
+        footer_frame.pack(fill=tk.X, padx=20, pady=10)
 
-        # Save Indicator (Top Row of Footer)
-        save_msg_frame = tk.Frame(footer_frame, bg=self.colors["bg"])
-        save_msg_frame.pack(fill=tk.X)
-        self.lbl_save_status = tk.Label(save_msg_frame, text="", font=self.font_small, 
-                                        bg=self.colors["bg"], fg=self.colors["fg_primary"])
-        self.lbl_save_status.pack(side=tk.RIGHT)
-
-        # Bottom Buttons (Bottom Row of Footer)
-        btn_frame = tk.Frame(footer_frame, bg=self.colors["bg"])
-        btn_frame.pack(fill=tk.X, pady=(5, 0))
-
-        self.create_flat_btn(btn_frame, "設定を閉じる", self.window.destroy, style="primary").pack(side=tk.LEFT)
-        self.create_flat_btn(btn_frame, "アプリを終了する", self.on_shutdown, style="danger").pack(side=tk.RIGHT)
+        self.create_flat_btn(footer_frame, "閉じる", self.window.destroy, style="secondary").pack(side=tk.LEFT)
+        self.lbl_save_status = tk.Label(footer_frame, text="", font=self.font_small,
+                                        bg=self.colors["bg"], fg=self.colors["active_bg"])
+        self.lbl_save_status.pack(side=tk.LEFT, padx=12)
+        self.create_flat_btn(footer_frame, "終了", self.on_shutdown, style="danger").pack(side=tk.RIGHT)
 
     def switch_tab(self, tab_id):
         self.current_tab = tab_id
         self.rebuild_ui()
 
     def draw_persona_tab(self):
-        # Content Area split for persona
         content_frame = tk.Frame(self.content_container, bg=self.colors["bg"])
         content_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # --- Left Panel (List) ---
-        frame_left = tk.Frame(content_frame, bg=self.colors["bg"], width=240)
-        frame_left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
-        
-        tk.Label(frame_left, text="ペルソナ一覧", font=self.font_bold, 
-                 bg=self.colors["bg"], fg=self.colors["fg_header"]).pack(anchor=tk.W, pady=(0,10))
-        
+
+        # --- Left Panel (List + Actions) ---
+        frame_left = tk.Frame(content_frame, bg=self.colors["bg"], width=220)
+        frame_left.pack(side=tk.LEFT, fill=tk.BOTH, padx=(0, 12))
+        frame_left.pack_propagate(False)
+
+        # Header with title + add button
+        header_left = tk.Frame(frame_left, bg=self.colors["bg"])
+        header_left.pack(fill=tk.X, pady=(0, 8))
+        tk.Label(header_left, text="一覧", font=self.font_header,
+                 bg=self.colors["bg"], fg=self.colors["fg_header"]).pack(side=tk.LEFT)
+        self.create_flat_btn(header_left, "+ 追加", self.add_persona, style="secondary").pack(side=tk.RIGHT)
+
+        # Listbox
         list_container = tk.Frame(frame_left, bg=self.colors["border"], padx=1, pady=1)
         list_container.pack(fill=tk.BOTH, expand=True)
-        
-        self.listbox = tk.Listbox(list_container, exportselection=False, 
+
+        self.listbox = tk.Listbox(list_container, exportselection=False,
                                   bg=self.colors["input_bg"], fg=self.colors["input_fg"],
                                   selectbackground=self.colors["select_bg"], selectforeground=self.colors["select_fg"],
                                   highlightthickness=0, borderwidth=0, font=self.font_main)
-        self.listbox.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.listbox.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
         self.listbox.bind("<<ListboxSelect>>", self.on_select)
-        
+
+        # Delete button (below list)
         frame_list_btns = tk.Frame(frame_left, bg=self.colors["bg"])
-        frame_list_btns.pack(fill=tk.X, pady=15)
-        self.create_flat_btn(frame_list_btns, "新規作成", self.add_persona, style="secondary").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
-        self.create_flat_btn(frame_list_btns, "削除", self.delete_persona, style="danger").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 0))
+        frame_list_btns.pack(fill=tk.X, pady=(8, 0))
+        self.create_flat_btn(frame_list_btns, "選択中を削除", self.delete_persona, style="danger").pack(fill=tk.X)
 
         # --- Right Panel (Details) ---
         frame_right = tk.Frame(content_frame, bg=self.colors["bg"])
         frame_right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        
-        frame_name = tk.Frame(frame_right, bg=self.colors["bg"])
-        frame_name.pack(fill=tk.X, pady=(0, 15))
-        tk.Label(frame_name, text="識別名 (ID):", font=self.font_bold, bg=self.colors["bg"], fg=self.colors["fg_header"]).pack(side=tk.LEFT, padx=(0,10))
-        self.entry_name = RoundedEntry(frame_name, textvariable=self.var_name,
+
+        # Active status + activate button (top of right panel)
+        frame_status = tk.Frame(frame_right, bg=self.colors["input_bg"], padx=10, pady=8)
+        frame_status.pack(fill=tk.X, pady=(0, 12))
+        self.lbl_active_status = tk.Label(frame_status, text="", font=self.font_bold, bg=self.colors["input_bg"])
+        self.lbl_active_status.pack(side=tk.LEFT)
+        self.btn_activate = self.create_flat_btn(frame_status, "このペルソナを有効化", self.set_active_persona, style="primary")
+        self.btn_activate.pack(side=tk.RIGHT)
+
+        # Name entry
+        tk.Label(frame_right, text="識別名", font=self.font_small,
+                 bg=self.colors["bg"], fg=self.colors["fg_primary"]).pack(anchor=tk.W, pady=(0, 4))
+        self.entry_name = RoundedEntry(frame_right, textvariable=self.var_name,
                                    bg=self.colors["input_bg"], fg=self.colors["input_fg"],
-                                   insertbackground=self.colors["fg_primary"], font=self.font_main, radius=8, height=36,
+                                   insertbackground=self.colors["fg_primary"], font=self.font_main, radius=6, height=34,
                                    focus_color=self.colors["active_bg"])
-        self.entry_name.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        self.entry_name.bind_entry("<FocusOut>", self.on_name_change) 
-        
-        tk.Label(frame_right, text="AI指示プロンプト (書き起こし調整):", font=self.font_bold, bg=self.colors["bg"], fg=self.colors["fg_header"]).pack(anchor=tk.W, pady=(0, 5))
+        self.entry_name.pack(fill=tk.X, pady=(0, 12))
+        self.entry_name.bind_entry("<FocusOut>", self.on_name_change)
+
+        # Instruction textarea
+        tk.Label(frame_right, text="AI指示プロンプト（書き起こしの調整に使われます）", font=self.font_small,
+                 bg=self.colors["bg"], fg=self.colors["fg_primary"]).pack(anchor=tk.W, pady=(0, 4))
         text_container = tk.Frame(frame_right, bg=self.colors["border"], padx=1, pady=1)
         text_container.pack(fill=tk.BOTH, expand=True)
         self.text_instruction = tk.Text(text_container, height=1, width=40, bg=self.colors["input_bg"], fg=self.colors["input_fg"],
@@ -398,14 +449,6 @@ class SettingsWindow:
                                         selectbackground=self.colors["select_bg"], selectforeground=self.colors["select_fg"])
         self.text_instruction.pack(fill=tk.BOTH, expand=True)
         self.text_instruction.bind("<KeyRelease>", self.on_text_change)
-
-        # Footer Actions for Persona
-        frame_persona_actions = tk.Frame(frame_right, bg=self.colors["bg"])
-        frame_persona_actions.pack(fill=tk.X, pady=(15, 0))
-        self.lbl_active_status = tk.Label(frame_persona_actions, text="", font=self.font_bold, bg=self.colors["bg"])
-        self.lbl_active_status.pack(side=tk.LEFT, padx=(0, 10))
-        self.btn_activate = self.create_flat_btn(frame_persona_actions, "有効化", self.set_active_persona, style="primary")
-        self.btn_activate.pack(side=tk.RIGHT)
 
         # Init persona tab state
         self.refresh_list()
@@ -553,6 +596,10 @@ class SettingsWindow:
         # Rebuild UI
         self.rebuild_ui()
 
+        # インジケーターの色も更新
+        if self.on_theme_change:
+            self.on_theme_change()
+
     def cycle_theme(self):
         theme_names = list(THEMES.keys())
         curr_idx = theme_names.index(self.current_theme_name) if self.current_theme_name in theme_names else 0
@@ -689,14 +736,12 @@ class SettingsWindow:
 
     def update_active_display(self):
         if self.current_index == self.settings["active_index"]:
-            # Active State
-            self.lbl_active_status.config(text="[ 稼働中 ]", fg=self.colors["active_bg"])
-            self.btn_activate.config(state=tk.DISABLED, text="現在使用中", 
+            self.lbl_active_status.config(text="● 稼働中", fg=self.colors["active_bg"])
+            self.btn_activate.config(state=tk.DISABLED, text="現在使用中",
                                      disabled_bg=self.colors["active_bg"], disabled_fg=self.colors["active_fg"])
         else:
-            # Idle State
-            self.lbl_active_status.config(text="", fg="black")
-            self.btn_activate.config(state=tk.NORMAL, text="このペルソナを有効化", 
+            self.lbl_active_status.config(text="○ 未使用", fg=self.colors["fg_primary"])
+            self.btn_activate.config(state=tk.NORMAL, text="このペルソナを有効化",
                                      bg=self.colors["btn_bg"], fg=self.colors["btn_fg"])
 
     def on_shutdown(self):
@@ -930,13 +975,8 @@ class RecordingIndicator:
         self.alpha_idle = 0.8
         self.alpha_active = 0.9
         
-        # カラー定義
-        self.color_idle = "#d0d6e0"
-        self.color_recording = "#7170ff"
-        self.color_process_start = (94, 106, 210)
-        self.color_process_end = (113, 112, 255)
-        self.color_error = "#e5484d"
-        self.color_grid = "#23252a"
+        # カラー定義（テーマから読み込み）
+        self.apply_theme_colors()
         
         self.on_quit_callback = None
         
@@ -949,6 +989,36 @@ class RecordingIndicator:
         
         # 起動時に設定ウィンドウを最小化状態で開く
         self.root.after(500, self.open_settings_minimized)
+
+    @staticmethod
+    def _hex_to_rgb(hex_color):
+        hex_color = hex_color.lstrip("#")
+        return (int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16))
+
+    @staticmethod
+    def _darken(hex_color, factor=0.3):
+        r, g, b = RecordingIndicator._hex_to_rgb(hex_color)
+        return f"#{int(r*factor):02x}{int(g*factor):02x}{int(b*factor):02x}"
+
+    def apply_theme_colors(self):
+        """現在のテーマからインジケーターの色を適用"""
+        theme_name = settings_manager.data.get("theme", "Linear")
+        theme = THEMES.get(theme_name, THEMES["Linear"])
+
+        self.color_idle = theme.get("wave_idle", "#d0d6e0")
+        self.color_recording = theme.get("wave_rec", "#7170ff")
+        self.color_error = theme.get("fg_danger", "#e5484d")
+        self.color_grid = theme.get("border", "#23252a")
+
+        proc_start = theme.get("wave_proc_start", "#e5a02e")
+        proc_end = theme.get("wave_proc_end", "#e5484d")
+        self.color_process_start = self._hex_to_rgb(proc_start)
+        self.color_process_end = self._hex_to_rgb(proc_end)
+
+        # グロー色（メイン色を暗くした版）
+        self.glow_idle = self._darken(self.color_idle)
+        self.glow_recording = self._darken(self.color_recording)
+        self.glow_error = self._darken(self.color_error)
 
     def open_settings_minimized(self):
         self.open_settings()
@@ -1003,7 +1073,8 @@ class RecordingIndicator:
             self.settings_window.focus_force()
             return
 
-        sw = SettingsWindow(self.root, on_quit_callback=self.on_quit_callback)
+        sw = SettingsWindow(self.root, on_quit_callback=self.on_quit_callback,
+                            on_theme_change=self.apply_theme_colors)
         self.settings_window = sw.window
 
 
@@ -1066,7 +1137,9 @@ class RecordingIndicator:
             self.processing_frame += 1
             swing_progress = (math.sin(self.processing_frame * 0.2) + 1) / 2 
             main_color = self.interpolate_color(self.color_process_start, self.color_process_end, swing_progress)
-            glow_color = self.interpolate_color((30,33,66), (35,35,80), swing_progress)
+            glow_start = tuple(c // 3 for c in self.color_process_start)
+            glow_end = tuple(c // 3 for c in self.color_process_end)
+            glow_color = self.interpolate_color(glow_start, glow_end, swing_progress)
 
             noise = random.randint(-15, 15)
             self.points.append(base_y + noise)
@@ -1079,7 +1152,7 @@ class RecordingIndicator:
                 self._update_alpha()
             
             main_color = self.color_error
-            glow_color = "#3d1517"
+            glow_color = self.glow_error
             
             # ランダムで鋭いスパイク
             if random.random() > 0.7:
@@ -1091,7 +1164,7 @@ class RecordingIndicator:
         elif self.is_recording:
             # === 録音中: 音量連動 ===
             main_color = self.color_recording
-            glow_color = "#3b3b7a"
+            glow_color = self.glow_recording
             
             # 音量に応じて振れ幅を変える
             # 基本ノイズ(1) + 音量ブースト (感度を微調整)
@@ -1102,7 +1175,7 @@ class RecordingIndicator:
         else:
             # === 待機中: PQRST心拍 ===
             main_color = self.color_idle
-            glow_color = "#3b3d45"
+            glow_color = self.glow_idle
             
             if not self.pqrst_queue:
                 # ランダムな間隔で鼓動を入れる

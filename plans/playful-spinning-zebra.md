@@ -1,148 +1,83 @@
-# Linear デザインシステム適用によるUI刷新プラン
+# 4テーマ追加プラン（Spotify / Raycast / Claude / ElevenLabs）
 
 ## Context
 
-音声認識βアプリ（tkinter製）のUIを、Linearのダークモードネイティブ・インディゴバイオレットアクセントのデザインシステムに沿って刷新する。現在4つのテーマ（Relax Navy, Cafe Mocha, Gruvbox, Cyberpunk）があるが、新たに「Linear」テーマを追加しデフォルトにする。既存テーマは引き続き選択可能。
+LinearとRelax Navyの2テーマに加え、Spotify・Raycast・Claude・ElevenLabsの4テーマを追加する。Claude・ElevenLabsはライトテーマで、ダーク系2つと合わせてバリエーション豊富な選択肢になる。
 
 ## 対象ファイル
 
-- `main.py` — テーマ辞書、SettingsManager、SettingsWindow、RecordingIndicator
-- `ui_widgets.py` — RoundedButton、RoundedEntry
+- `main.py` — THEMES辞書に4エントリ追加（波形カラー含む）
 
----
+## 追加テーマ定義
 
-## Phase 1: Linearテーマトークン追加（main.py）
-
-### 1-1. `THEMES` 辞書にLinearエントリ追加（197行目付近）
-
-辞書の**先頭**に追加:
-
+### Spotify（ダーク / グリーンアクセント）
 ```python
-"Linear": {
-    "bg": "#0f1011",              # Panel Dark
-    "fg_primary": "#d0d6e0",      # Secondary Text（本文）
-    "fg_header": "#f7f8f8",       # Primary Text（見出し）
-    "fg_danger": "#e5484d",       # クールな赤（Radix Red 9）
-    "input_bg": "#191a1b",        # Level 3 Surface
-    "input_fg": "#d0d6e0",        # Secondary Text
-    "btn_bg": "#191a1b",          # Level 3 Surface
-    "btn_fg": "#d0d6e0",          # Secondary Text
-    "btn_danger_bg": "#1a1011",   # ダーク赤背景
-    "btn_danger_fg": "#e5484d",   # クール赤
-    "select_bg": "#5e6ad2",       # Brand Indigo
-    "select_fg": "#f7f8f8",       # Primary Text
-    "border": "#23252a",          # Border Primary
-    "active_bg": "#5e6ad2",       # Brand Indigo
-    "active_fg": "#f7f8f8",       # Primary Text
-    "font": "Segoe UI"            # Windows上のInter代替
+"Spotify": {
+    "bg": "#121212", "fg_primary": "#b3b3b3", "fg_header": "#ffffff", "fg_danger": "#f3727f",
+    "input_bg": "#1f1f1f", "input_fg": "#ffffff",
+    "btn_bg": "#1f1f1f", "btn_fg": "#ffffff",
+    "btn_danger_bg": "#1a0a0a", "btn_danger_fg": "#f3727f",
+    "select_bg": "#1ed760", "select_fg": "#121212", "border": "#282828",
+    "active_bg": "#1ed760", "active_fg": "#121212", "font": "Segoe UI",
+    "wave_idle": "#1ed760", "wave_rec": "#539df5",
+    "wave_proc_start": "#ffa42b", "wave_proc_end": "#f3727f",
 },
 ```
 
-### 1-2. デフォルトテーマ変更
-
-- `SettingsManager._DEFAULTS`（106行目）: `"theme": "Relax Navy"` → `"theme": "Linear"`
-- `SettingsWindow.__init__`（247行目）: フォールバック `"Relax Navy"` → `"Linear"`
-- `SettingsWindow.__init__`（249行目）: フォールバック `"Relax Navy"` → `"Linear"`
-
-### 1-3. フォントサイズ調整（252-257行目）
-
+### Raycast（ダーク / 赤アクセント）
 ```python
-base_font = self.colors.get("font", "Segoe UI")
-self.font_main   = (base_font, 10)
-self.font_bold   = (base_font, 10, "bold")
-self.font_header = (base_font, 12, "bold")   # 11→12
-self.font_small  = (base_font, 9)             # 8→9
+"Raycast": {
+    "bg": "#07080a", "fg_primary": "#cecece", "fg_header": "#f9f9f9", "fg_danger": "#FF6363",
+    "input_bg": "#101111", "input_fg": "#f9f9f9",
+    "btn_bg": "#101111", "btn_fg": "#cecece",
+    "btn_danger_bg": "#1a0808", "btn_danger_fg": "#FF6363",
+    "select_bg": "#FF6363", "select_fg": "#ffffff", "border": "#252829",
+    "active_bg": "#FF6363", "active_fg": "#ffffff", "font": "Segoe UI",
+    "wave_idle": "#9c9c9d", "wave_rec": "#FF6363",
+    "wave_proc_start": "#ffbc33", "wave_proc_end": "#FF6363",
+},
 ```
 
----
-
-## Phase 2: RecordingIndicatorカラー更新（main.py）
-
-### 2-1. カラー定義変更（919-925行目）
-
+### Claude（ライト / テラコッタアクセント）
 ```python
-self.color_idle          = "#8a8f98"         # 緑→クール灰（Tertiary Text）
-self.color_recording     = "#7170ff"         # シアン→アクセントバイオレット
-self.color_process_start = (94, 106, 210)    # オレンジ→Brand Indigo RGB
-self.color_process_end   = (113, 112, 255)   # 赤→Accent Violet RGB
-self.color_error         = "#e5484d"         # 紫→クール赤
-self.color_grid          = "#23252a"         # ダークシアン→Border Primary
+"Claude": {
+    "bg": "#f5f4ed", "fg_primary": "#5e5d59", "fg_header": "#141413", "fg_danger": "#b53333",
+    "input_bg": "#ffffff", "input_fg": "#141413",
+    "btn_bg": "#e8e6dc", "btn_fg": "#4d4c48",
+    "btn_danger_bg": "#f0e0e0", "btn_danger_fg": "#b53333",
+    "select_bg": "#c96442", "select_fg": "#ffffff", "border": "#e8e6dc",
+    "active_bg": "#c96442", "active_fg": "#ffffff", "font": "Georgia",
+    "wave_idle": "#c96442", "wave_rec": "#d97757",
+    "wave_proc_start": "#d4a373", "wave_proc_end": "#b53333",
+},
 ```
 
-### 2-2. グローカラー変更（update_wave内）
-
-| 状態 | 現在 | 変更後 |
-|------|------|--------|
-| Processing glow start（1055行目） | `(100,50,0)` | `(30,33,66)` |
-| Processing glow end（1055行目） | `(100,0,0)` | `(35,35,80)` |
-| Error glow（1068行目） | `"#4b0082"` | `"#3d1517"` |
-| Recording glow（1080行目） | `"#008080"` | `"#3b3b7a"` |
-| Idle glow（1091行目） | `"#003300"` | `"#1a1b1e"` |
-
----
-
-## Phase 3: ウィジェット改善（ui_widgets.py）
-
-### 3-1. デフォルトフォント変更
-
-- `RoundedButton.__init__`（33行目）: `"Verdana"` → `"Segoe UI"`
-- `RoundedEntry.__init__`（186行目）: `"Verdana"` → `"Segoe UI"`
-
-### 3-2. RoundedEntryのフォーカスリング実装（211-215行目）
-
+### ElevenLabs（ライト / モノクロ＋ストーン）
 ```python
-def __init__(self, ...):
-    ...
-    self._original_border_color = border_color  # 追加
-    self.focus_color = kwargs.pop('focus_color', "#5e6ad2")  # 追加
-    ...
-
-def _on_focus_in(self, event):
-    self.border_color = self.focus_color
-    self.draw()
-
-def _on_focus_out(self, event):
-    self.border_color = self._original_border_color
-    self.draw()
+"ElevenLabs": {
+    "bg": "#f5f5f5", "fg_primary": "#4e4e4e", "fg_header": "#000000", "fg_danger": "#cc3333",
+    "input_bg": "#ffffff", "input_fg": "#000000",
+    "btn_bg": "#f5f2ef", "btn_fg": "#000000",
+    "btn_danger_bg": "#f5e0e0", "btn_danger_fg": "#cc3333",
+    "select_bg": "#000000", "select_fg": "#ffffff", "border": "#e5e5e5",
+    "active_bg": "#000000", "active_fg": "#ffffff", "font": "Segoe UI",
+    "wave_idle": "#b0aea5", "wave_rec": "#777169",
+    "wave_proc_start": "#c9a06a", "wave_proc_end": "#cc3333",
+},
 ```
 
-SettingsWindow側でRoundedEntry生成時に `focus_color=self.colors["active_bg"]` を渡す。
+## 配置順序
 
----
+THEMES辞書内の順序（外観タブのリスト順）:
+1. Linear（デフォルト）
+2. Relax Navy
+3. Spotify
+4. Raycast
+5. Claude
+6. ElevenLabs
 
-## Phase 4: レイアウト微調整（main.py）
+## 検証
 
-### 4-1. メインフレームのボーダー
-
-- 274行目: `highlightthickness=2` → `highlightthickness=1`
-
-### 4-2. タブ下セパレーター追加
-
-`tab_frame.pack(...)` の直後にセパレーターラインを挿入:
-```python
-separator = tk.Frame(self.main_frame, bg=self.colors["border"], height=1)
-separator.pack(fill=tk.X, padx=10)
-```
-
-### 4-3. Text widgetのセレクション色追加
-
-Text widget生成箇所に `selectbackground=self.colors["select_bg"]`, `selectforeground=self.colors["select_fg"]` を追加。
-
-### 4-4. パディング調整
-
-- content_container（307行目）: `padx=15, pady=10` → `padx=20, pady=12`
-- footer_frame（320行目）: `padx=15, pady=(0, 10)` → `padx=20, pady=(0, 12)`
-
----
-
-## 検証手順
-
-1. アプリ起動 → Linearテーマがデフォルトで適用されることを確認
-2. 設定ウィンドウの全4タブ（ペルソナ、音声設定、モデル、外観）を巡回し、配色・フォントを目視確認
-3. 外観タブで他テーマ（Relax Navy等）に切り替えて正常動作を確認
-4. RecordingIndicatorの各状態を確認:
-   - 待機中: 灰色の心拍パターン
-   - 録音中: バイオレット色の音量連動波形
-   - 処理中: インディゴ↔バイオレットのグリッチアニメーション
-   - エラー: 赤のスパイクパターン
-5. RoundedEntryにフォーカスした際、インディゴのフォーカスリングが表示されることを確認
+1. アプリ起動後、外観タブで6テーマ全て切り替え確認
+2. 各テーマでインジケーター波形の色が連動することを確認
+3. ライトテーマ（Claude/ElevenLabs）で文字が読めることを確認
