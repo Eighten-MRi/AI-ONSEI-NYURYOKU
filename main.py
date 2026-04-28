@@ -7,8 +7,51 @@ import socket # 多重起動チェック用
 import json
 
 import speech_recognition as sr
-import keyboard
-import audioop # 音量解析用
+
+# OS判定 (cross-platform対応)
+IS_WINDOWS = sys.platform == "win32"
+IS_MAC = sys.platform == "darwin"
+
+if IS_WINDOWS:
+    import keyboard
+else:
+    from pynput import keyboard as pynput_keyboard
+
+# audioop は Python 3.13 で削除されたため、numpy ベースの fallback を用意
+try:
+    import audioop
+except ImportError:
+    import numpy as _np
+
+    class _AudioopFallback:
+        @staticmethod
+        def rms(data, width):
+            if width != 2:
+                raise ValueError("only 16-bit PCM supported")
+            samples = _np.frombuffer(data, dtype=_np.int16).astype(_np.float64)
+            if samples.size == 0:
+                return 0
+            return int(_np.sqrt(_np.mean(samples * samples)))
+
+        @staticmethod
+        def max(data, width):
+            if width != 2:
+                raise ValueError("only 16-bit PCM supported")
+            samples = _np.frombuffer(data, dtype=_np.int16)
+            if samples.size == 0:
+                return 0
+            return int(_np.abs(samples.astype(_np.int32)).max())
+
+        @staticmethod
+        def mul(data, width, factor):
+            if width != 2:
+                raise ValueError("only 16-bit PCM supported")
+            samples = _np.frombuffer(data, dtype=_np.int16).astype(_np.float64)
+            scaled = _np.clip(samples * factor, -32768, 32767).astype(_np.int16)
+            return scaled.tobytes()
+
+    audioop = _AudioopFallback()
+
 import google.generativeai as genai
 import pyperclip
 import pyautogui
@@ -107,12 +150,16 @@ SYSTEM_PROMPT = (
 class SettingsManager:
     """設定をメモリ上でキャッシュし、ファイルI/Oを最小化する。
     ファイルの読み書きは起動時と保存時の1回ずつのみ。"""
+    # OSに応じた既定の録音トリガーキー (Windows: 右Alt / Mac: 右Command)
+    _DEFAULT_RECORDING_KEY = "right alt" if IS_WINDOWS else "right cmd"
+
     _DEFAULTS = {
         "personas": [{"name": "標準", "instruction": ""}],
         "active_index": 0,
         "energy_threshold": 300,
         "theme": "Linear",
         "live_model": "gemini-3.1-flash-live-preview",
+        "recording_key": _DEFAULT_RECORDING_KEY,
     }
 
     def __init__(self, path: str):
@@ -157,6 +204,10 @@ class SettingsManager:
     @property
     def live_model(self):
         return self._data.get("live_model", "gemini-3.1-flash-live-preview")
+
+    @property
+    def recording_key(self):
+        return self._data.get("recording_key", self._DEFAULT_RECORDING_KEY)
 
     @property
     def active_persona_instruction(self):
@@ -914,12 +965,22 @@ class RecordingIndicator:
         
         self.root = tk.Tk()
         self.root.title("Recording Indicator (Click Layer)")
-        
+
         # Click Layer Setup
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
         self.root.attributes("-alpha", 0.01) # ほぼ透明だがクリック可能
         self.root.config(bg="#000000")
+
+        # Mac: 他アプリより上に居続けるため floating ウィンドウレベルに設定
+        if IS_MAC:
+            try:
+                self.root.tk.call(
+                    "::tk::unsupported::MacWindowStyle", "style",
+                    self.root._w, "floating", "noTitleBar",
+                )
+            except Exception:
+                pass
         
         # サイズと位置 (画面中央下)
         width, height = 100, 40 
@@ -934,12 +995,33 @@ class RecordingIndicator:
         self.visual_window.title("Recording Indicator (Visual Layer)")
         self.visual_window.overrideredirect(True)
         self.visual_window.attributes("-topmost", True)
-        self.visual_window.attributes("-transparentcolor", "black")
-        self.visual_window.config(bg="black")
+        # Mac: floatingレベルで他アプリより前面を維持
+        if IS_MAC:
+            try:
+                self.visual_window.tk.call(
+                    "::tk::unsupported::MacWindowStyle", "style",
+                    self.visual_window._w, "floating", "noTitleBar",
+                )
+            except Exception:
+                pass
+        # 透過背景: Windowsはキーカラー(黒)指定 / Macは -transparent + systemTransparent
+        if IS_WINDOWS:
+            self.visual_window.attributes("-transparentcolor", "black")
+            self.visual_window.config(bg="black")
+            canvas_bg = "black"
+        else:
+            try:
+                self.visual_window.attributes("-transparent", True)
+                self.visual_window.config(bg="systemTransparent")
+                canvas_bg = "systemTransparent"
+            except Exception:
+                # systemTransparent 非対応環境のフォールバック (黒い小さな箱になる)
+                self.visual_window.config(bg="black")
+                canvas_bg = "black"
         self.visual_window.geometry(f"{width}x{height}+{x}+{y}")
-        
-        # Canvasは Visual Layer に配置 (背景は透過キーの黒)
-        self.canvas = tk.Canvas(self.visual_window, width=width, height=height, bg="black", highlightthickness=0)
+
+        # Canvasは Visual Layer に配置 (Windows: 透過キーの黒 / Mac: systemTransparent)
+        self.canvas = tk.Canvas(self.visual_window, width=width, height=height, bg=canvas_bg, highlightthickness=0)
         self.canvas.pack()
         
         # === イベントバインディング (両方のウィンドウで設定) ===
@@ -948,12 +1030,18 @@ class RecordingIndicator:
         self.root.bind("<Button-1>", self.start_move)
         self.root.bind("<B1-Motion>", self.do_move)
         self.root.bind("<ButtonRelease-1>", self.stop_move)
-        
+
         # Visual Layer: 波形(線)クリック用
         # Canvas自体がイベントを受ける
         self.canvas.bind("<Button-3>", self.open_settings_handler)
         self.canvas.bind("<Button-1>", self.start_move)
         self.canvas.bind("<B1-Motion>", self.do_move)
+
+        # Mac: 2本指タップは <Button-2>、Ctrl+Click も右クリック扱い
+        if IS_MAC:
+            for w in (self.root, self.canvas):
+                w.bind("<Button-2>", self.open_settings_handler)
+                w.bind("<Control-Button-1>", self.open_settings_handler)
         self.canvas.bind("<ButtonRelease-1>", self.stop_move)
         
         self.width = width
@@ -983,7 +1071,7 @@ class RecordingIndicator:
         # 初期描画 (Visual Layerの透過度設定)
         self.visual_window.attributes("-alpha", self.alpha_idle)
         self.update_wave()
-        
+
         # 2つのウィンドウを同期させ続けるためのループ
         self.sync_windows()
         
@@ -1060,8 +1148,6 @@ class RecordingIndicator:
 
     def stop_move(self, event):
         """ドラッグ終了"""
-        if not self.drag_data["moved"]:
-            self.on_click(event)
         self.drag_data["moved"] = False
 
     def open_settings_handler(self, event):
@@ -1223,6 +1309,111 @@ class RecordingIndicator:
         self.root.destroy()
 
 
+class KeyMonitor:
+    """OS別のキーボード監視抽象。押下状態の取得と Windows 固有の挙動制御を統一インタフェースで提供。"""
+
+    def is_pressed(self) -> bool:
+        raise NotImplementedError
+
+    def block(self):
+        pass
+
+    def unblock(self):
+        pass
+
+    def neutralize_alt_menu(self):
+        pass
+
+    def stop(self):
+        pass
+
+
+class WindowsKeyMonitor(KeyMonitor):
+    """Windows: keyboard ライブラリで右Alt(VK 165)と設定キーの両方を検出。"""
+
+    _RIGHT_ALT_VK = 165
+
+    def __init__(self, recording_key: str):
+        self._recording_key = recording_key
+
+    def is_pressed(self) -> bool:
+        return keyboard.is_pressed(self._RIGHT_ALT_VK) or keyboard.is_pressed(self._recording_key)
+
+    def block(self):
+        try:
+            keyboard.block_key(self._RIGHT_ALT_VK)
+        except Exception:
+            pass
+
+    def unblock(self):
+        try:
+            keyboard.unblock_key(self._RIGHT_ALT_VK)
+        except Exception:
+            pass
+
+    def neutralize_alt_menu(self):
+        # Alt単体押下→離しでWindowsメニューが反応するため、Shiftを空打ちして「Alt単体ではない」と認識させる
+        keyboard.press('shift')
+        keyboard.release('shift')
+
+
+class MacKeyMonitor(KeyMonitor):
+    """Mac: pynput Listener でトリガーキー押下フラグを保持。"""
+
+    _KEY_MAP = {
+        "right cmd": "cmd_r",
+        "right command": "cmd_r",
+        "left cmd": "cmd_l",
+        "left command": "cmd_l",
+        "right alt": "alt_r",
+        "right option": "alt_r",
+        "left alt": "alt_l",
+        "left option": "alt_l",
+        "right ctrl": "ctrl_r",
+        "right control": "ctrl_r",
+        "left ctrl": "ctrl_l",
+        "left control": "ctrl_l",
+        "right shift": "shift_r",
+        "left shift": "shift_l",
+        "f13": "f13", "f14": "f14", "f15": "f15", "f16": "f16",
+        "f17": "f17", "f18": "f18", "f19": "f19",
+    }
+
+    def __init__(self, recording_key: str):
+        attr = self._KEY_MAP.get(recording_key.lower(), "cmd_r")
+        self._target_key = getattr(pynput_keyboard.Key, attr, pynput_keyboard.Key.cmd_r)
+        self._pressed = False
+        self._listener = pynput_keyboard.Listener(
+            on_press=self._on_press,
+            on_release=self._on_release,
+        )
+        self._listener.daemon = True
+        self._listener.start()
+
+    def _on_press(self, key):
+        if key == self._target_key:
+            self._pressed = True
+
+    def _on_release(self, key):
+        if key == self._target_key:
+            self._pressed = False
+
+    def is_pressed(self) -> bool:
+        return self._pressed
+
+    def stop(self):
+        try:
+            self._listener.stop()
+        except Exception:
+            pass
+
+
+def create_key_monitor(recording_key: str) -> KeyMonitor:
+    if IS_WINDOWS:
+        return WindowsKeyMonitor(recording_key)
+    return MacKeyMonitor(recording_key)
+
+
 class VoiceInputApp:
     def __init__(self):
         self.recognizer = sr.Recognizer()
@@ -1230,7 +1421,8 @@ class VoiceInputApp:
         self.is_recording = False
         self.use_ai = True  # AI使用フラグ
         self.audio_queue = queue.Queue()
-        self.recording_key = "right alt"
+        self.recording_key = settings_manager.recording_key
+        self.key_monitor = create_key_monitor(self.recording_key)
         self.icon = None
         self.running = True
         self.indicator = RecordingIndicator()
@@ -1246,6 +1438,8 @@ class VoiceInputApp:
         """アプリ終了処理"""
         self.running = False
         self.indicator.stop()
+        if self.key_monitor:
+            self.key_monitor.stop()
         sys.exit(0)
 
 
@@ -1321,15 +1515,13 @@ class VoiceInputApp:
         try:
             # 1. クリップボードにコピー
             pyperclip.copy(text)
-            time.sleep(0.05) 
-            
-            # 2. フォーカス復帰ハック (中和法と併用し、確実にフォーカスを確保)
-            # 既に中和されているはずだが、念のため Ctrl タップでフォーカスを再確認
-            pyautogui.press('ctrl')
+            time.sleep(0.05)
+
+            # 2. フォーカス復帰ハック + 3. 貼り付け実行 (OS別ショートカット)
+            modifier = "command" if IS_MAC else "ctrl"
+            pyautogui.press(modifier)
             time.sleep(0.01)
-            
-            # 3. 貼り付け実行
-            pyautogui.hotkey('ctrl', 'v')
+            pyautogui.hotkey(modifier, 'v')
             
             print(f" -> ペースト完了: {len(text)} 文字")
         except Exception as e:
@@ -1350,23 +1542,18 @@ class VoiceInputApp:
         print("--- 録音待機中 ---")
         while self.running:
             try:
-                # 右Alt (キーコード165) を優先検知
-                is_pressed = keyboard.is_pressed(165) or keyboard.is_pressed(self.recording_key)
+                # トリガーキー押下検知 (Windowsは右Alt VK165優先 / Macはpynputフラグ)
+                is_pressed = self.key_monitor.is_pressed()
 
                 if is_pressed and not self.is_recording:
                     self.is_recording = True
                     self.indicator.set_recording(True)
 
-                    # === 【重要】Altキーの中和処理 (Neutralization) ===
-                    # Altだけが押されて離されるとWindowsのメニューが反応する。
-                    # 録音開始（Alt押下）直後にShiftを空打ちすることで、
-                    # Windowsに「Alt単体押しではない」と認識させ、メニュー起動を根絶する。
-                    keyboard.press('shift')
-                    keyboard.release('shift')
+                    # Windows のみ: Alt単体押下によるメニュー暴発を防ぐためShiftを空打ち
+                    self.key_monitor.neutralize_alt_menu()
 
-                    # Altキー押下イベントを遮断 (他のアプリへの漏洩防止)
-                    try: keyboard.block_key(165)
-                    except: pass
+                    # Windows のみ: Altキー押下イベントを遮断 (他のアプリへの漏洩防止)
+                    self.key_monitor.block()
 
                     # --- モデル種別判定 ---
                     selected_model = settings_manager.live_model
@@ -1395,7 +1582,7 @@ class VoiceInputApp:
                         frames = []
                         stream = p.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK)
 
-                        while (keyboard.is_pressed(165) or keyboard.is_pressed(self.recording_key)) and self.running:
+                        while self.key_monitor.is_pressed() and self.running:
                             data = stream.read(CHUNK, exception_on_overflow=False)
                             frames.append(data)
                             rms = audioop.rms(data, 2)
@@ -1416,9 +1603,8 @@ class VoiceInputApp:
                         self.indicator.set_recording(False)
                         if transcriber:
                             transcriber.stop_session()
-                        # 必ずブロックを解除
-                        try: keyboard.unblock_key(165)
-                        except: pass
+                        # 必ずブロックを解除 (Mac側ではno-op)
+                        self.key_monitor.unblock()
 
                     # Live API の処理完了を待ってからフォールバック判定
                     if transcriber:
@@ -1524,16 +1710,25 @@ class VoiceInputApp:
         # 処理ループを別スレッドで開始
         threading.Thread(target=self.record_audio, daemon=True).start()
         threading.Thread(target=self.main_loop, daemon=True).start()
-        
-        # コンテキストメニュー設定（不要になったので削除）
-        # self.indicator.setup_context_menu(self.on_quit)
-        
+
         # コールバック設定
         self.indicator.set_callback(self.on_quit)
 
-        
+        # 起動時に設定画面を開いて即座に最小化 (mainloop 起動後に実行)
+        self.indicator.root.after(300, self._auto_open_settings_minimized)
+
         # Tkinter (インジケータ) をメインスレッドで実行
         self.indicator.run()
+
+    def _auto_open_settings_minimized(self):
+        """起動直後に設定画面を開いて最小化する"""
+        try:
+            self.indicator.open_settings()
+            sw = getattr(self.indicator, "settings_window", None)
+            if sw and sw.winfo_exists():
+                sw.iconify()
+        except Exception as e:
+            print(f"[設定画面の自動最小化に失敗]: {e}")
 
 if __name__ == "__main__":
     if is_already_running():

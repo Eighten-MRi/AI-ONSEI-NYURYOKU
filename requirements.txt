@@ -1,7 +1,10 @@
 SpeechRecognition
 pyaudio
-keyboard
+keyboard ; sys_platform == "win32"
+pynput ; sys_platform != "win32"
+numpy
 google-generativeai
+google-genai
 pyperclip
 pyautogui
 python-dotenv
